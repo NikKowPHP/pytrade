@@ -12,10 +12,11 @@ Here is the comprehensive summary of the **AI Forex Swing Assistant** applicatio
 
 #### **Phase 1: Input (Data Gathering)**
 *   **User Action:** You open the GUI and select a pair (e.g., `EURUSD`).
+*   **User Action:** You select the **Timeframe** (e.g., `1H`, `4H`, `1D`) and the **Number of Candles** to analyze.
 *   **User Action:** You copy-paste the latest major economic news or fundamental context into the text box (e.g., *"Fed Chair Powell suggests interest rates will stay high"*).
 *   **System Action (Python):**
-    *   Fetches the last 100 candles of OHLC data via `yfinance` (or `MT5`).
-    *   *Why?* To get the raw price action structure.
+    *   Fetches the requested number of candles (e.g., 100) of OHLC data for the chosen timeframe via `yfinance` (or `MT5`).
+    *   *Why?* To get the raw price action structure according to user preference.
 
 #### **Phase 2: Pre-Processing (The Mathematical Layer)**
 *   **Who does it:** Python (`pandas_ta` library).
@@ -34,7 +35,7 @@ Here is the comprehensive summary of the **AI Forex Swing Assistant** applicatio
     > Based on this, decide BUY/SELL/WAIT. If acting, set SL at 1.5x ATR."
 
 #### **Phase 4: The Analysis (The Reasoning Layer)**
-*   **Who does it:** Gemini 1.5 Flash API.
+*   **Who does it:** Gemini 3 Flash API.
 *   **Action:**
     1.  Reads the Fundamental News (identifies sentiment: Hawkish/Dovish/Fear/Greed).
     2.  Checks if Fundamentals align with Technicals (e.g., "News is bad for Euro, and Technical Trend is Bearish -> **High Probability Short**").

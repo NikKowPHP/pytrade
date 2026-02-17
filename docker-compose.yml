@@ -1,0 +1,14 @@
+services:
+  app:
+    build: 
+      context: .
+      network: host
+    container_name: pytrade_app
+    
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix # Share X11 socket for GUI
+      - ./.env:/app/.env # Mount .env file
+    environment:
+      - DISPLAY=${DISPLAY} # Pass DISPLAY variable
+    network_mode: host # Often easier for X11 on Linux
+    # If network_mode: host doesn't work or is unwanted, remove it and ensure X11 permissions.
