@@ -57,11 +57,10 @@ class ChartService:
                 hlines_config = dict(hlines=hlines_list, colors=colors, linestyle='-.', linewidths=2)
 
             # Create the figure
-            fig, axlist = mpf.plot(
-                plot_df,
+            # FIX: Do not pass hlines=None directly. Construct kwargs dynamically.
+            plot_kwargs = dict(
                 type='candle',
                 style=self.style,
-                hlines=hlines_config,
                 returnfig=True,
                 figsize=(8, 5),
                 tight_layout=True,
@@ -69,6 +68,11 @@ class ChartService:
                 volume=True,
                 show_nontrading=False
             )
+            
+            if hlines_config:
+                plot_kwargs['hlines'] = hlines_config
+
+            fig, axlist = mpf.plot(plot_df, **plot_kwargs)
 
             # Embed into Tkinter
             self.canvas = FigureCanvasTkAgg(fig, master=parent_frame)
