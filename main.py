@@ -53,7 +53,7 @@ class ForexApp(ctk.CTk):
             self.timeframe_label.grid(row=1, column=0, padx=10, pady=10, sticky="w")
             self.timeframe_option = ctk.CTkOptionMenu(self.input_frame, values=["1h", "4h", "1d"])
             self.timeframe_option.grid(row=1, column=1, padx=10, pady=10, sticky="ew")
-            self.timeframe_option.set("4h")
+            self.timeframe_option.set("1d")
 
             # Provider Input
             self.provider_label = ctk.CTkLabel(self.input_frame, text="AI Provider:")
@@ -103,9 +103,44 @@ class ForexApp(ctk.CTk):
             self.chart_label = ctk.CTkLabel(self.chart_frame, text="Market Chart will appear here after analysis", font=("Roboto", 14))
             self.chart_label.grid(row=0, column=0)
             self.last_df = None
+            
+            # CHANGE: Trigger initial data load on startup
+            self.after(500, self.start_initial_load)
 
         except Exception as e:
             self.logger.exception(f"Error initializing UI: {e}")
+
+    # NEW METHODS ADDED HERE
+    def start_initial_load(self):
+        """Starts the background thread to load the chart immediately."""
+        threading.Thread(target=self.load_initial_chart, daemon=True).start()
+
+    def load_initial_chart(self):
+        """Fetches data and renders chart without triggering full AI analysis."""
+        try:
+            symbol = self.symbol_option.get()
+            timeframe = self.timeframe_option.get()
+            
+            self.after(0, lambda: self.update_ui_status(f"Startup: Fetching latest data for {symbol} ({timeframe})..."))
+
+            # 1. Fetch Data (Updates Local DB)
+            df, error = self.data_provider.fetch_data(symbol, timeframe)
+            if error:
+                self.after(0, lambda: self.update_ui_error(f"Startup Data Error: {error}"))
+                return
+            
+            self.last_df = df
+            
+            # 2. Calculate Indicators (needed for chart if we plot them later, or just to have ready)
+            df = self.data_provider.calculate_indicators(df)
+            
+            # 3. Render Chart (Pass None for ai_results)
+            self.after(0, lambda: self.chart_service.create_chart(self.chart_frame, df, None))
+            self.after(0, lambda: self.update_ui_status(f"Ready. Data for {symbol} ({timeframe}) is up to date."))
+            
+        except Exception as e:
+            self.logger.exception(f"Error in load_initial_chart: {e}")
+            self.after(0, lambda: self.update_ui_error(f"Startup Error: {str(e)}"))
 
     def start_analysis(self):
         try:
