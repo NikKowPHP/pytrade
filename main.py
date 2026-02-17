@@ -2,7 +2,11 @@ import customtkinter as ctk
 import threading
 from services.market_data import MarketDataProvider
 from services.ai_service import AITrader
+from services.news_service import NewsService
 from services.logger import Logger
+import mplfinance as mpf
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import matplotlib.pyplot as plt
 
 class ForexApp(ctk.CTk):
     def __init__(self):
@@ -10,21 +14,23 @@ class ForexApp(ctk.CTk):
         self.logger = Logger()
         self.logger.info("Initializing ForexApp")
 
-        self.title("AI Forex Swing Assistant - Analytics Enhanced")
-        self.geometry("700x850") # Slightly taller/wider for more data
+        self.title("AI Forex Swing Assistant - Professional Edition")
+        self.geometry("1100x900") # Wider for chart
         
         try:
             # Initialize Services
             self.data_provider = MarketDataProvider()
             self.ai_trader = AITrader()
+            self.news_service = NewsService()
 
             # Layout Configuration
             self.grid_columnconfigure(0, weight=1)
+            self.grid_columnconfigure(1, weight=3) # Chart column
             self.grid_rowconfigure(5, weight=1)
 
             # Header
-            self.header_label = ctk.CTkLabel(self, text="AI Forex Swing Analysis", font=("Roboto", 24, "bold"))
-            self.header_label.grid(row=0, column=0, padx=20, pady=20)
+            self.header_label = ctk.CTkLabel(self, text="AI Forex Professional Analysis", font=("Roboto", 24, "bold"))
+            self.header_label.grid(row=0, column=0, columnspan=2, padx=20, pady=20)
 
             # Inputs Frame
             self.input_frame = ctk.CTkFrame(self)
@@ -89,6 +95,18 @@ class ForexApp(ctk.CTk):
             self.result_box.insert("0.0", "Ready to analyze...")
             self.result_box.configure(state="disabled")
 
+            # Chart Frame (Column 1)
+            self.chart_frame = ctk.CTkFrame(self)
+            self.chart_frame.grid(row=1, column=1, rowspan=5, padx=20, pady=10, sticky="nsew")
+            self.chart_frame.grid_columnconfigure(0, weight=1)
+            self.chart_frame.grid_rowconfigure(0, weight=1)
+            
+            self.chart_label = ctk.CTkLabel(self.chart_frame, text="Market Chart will appear here after analysis", font=("Roboto", 14))
+            self.chart_label.grid(row=0, column=0)
+            
+            self.canvas = None
+            self.last_df = None # Store to re-render if needed
+
         except Exception as e:
             self.logger.exception(f"Error initializing UI: {e}")
 
@@ -133,15 +151,30 @@ class ForexApp(ctk.CTk):
                 self.after(0, lambda: self.update_ui_error(f"Error fetching data: {error}"))
                 return
             
+            self.last_df = df # Store for charting
+            
             # 2. Calculate Indicators
             df = self.data_provider.calculate_indicators(df)
             
-            # 3. Generate Prompt AND Get Technical Data
+            # 3. Fetch Automated News & Economic Calendar
+            self.after(0, lambda: self.update_ui_status("2. Fetching Automated News & Calendar...\n"))
+            auto_news = self.news_service.fetch_news(symbol)
+            calendar = self.news_service.fetch_economic_calendar(symbol)
+            
+            # Combine with manual context if any
+            manual_news = self.news_textbox.get("1.0", "end").strip()
+            total_news_context = f"{manual_news}\n\n{auto_news}" if manual_news else auto_news
+
+            # 4. Generate Prompt AND Get Technical Data
             # Note: generate_prompt now returns a tuple (prompt, details)
-            prompt, tech_details = self.ai_trader.generate_prompt(df, news, symbol)
+            prompt, tech_details = self.ai_trader.generate_prompt(
+                df, symbol, 
+                news_context=total_news_context, 
+                calendar_context=calendar
+            )
             
             # Update UI to show we are consulting AI
-            self.after(0, lambda: self.update_ui_status("2. Consulting AI Model...\n"))
+            self.after(0, lambda: self.update_ui_status("3. Consulting AI Model...\n"))
             
             # 4. Call AI
             provider = self.provider_option.get()
@@ -154,6 +187,9 @@ class ForexApp(ctk.CTk):
                 
             # 5. Show Results (Pass both AI response and Tech Details)
             self.after(0, lambda: self.update_ui_result(response, tech_details))
+            
+            # 6. Render Chart
+            self.after(0, lambda: self.render_chart(response))
             
         except Exception as e:
             self.logger.exception(f"Unexpected Error in run_analysis: {str(e)}")
@@ -219,6 +255,60 @@ class ForexApp(ctk.CTk):
             
         except Exception as e:
              self.logger.exception(f"Error updating UI result: {e}")
+
+    def render_chart(self, ai_response):
+        try:
+            if self.last_df is None or self.last_df.empty:
+                return
+
+            self.logger.info("Rendering mplfinance chart")
+            
+            # Clear previous chart
+            if self.canvas:
+                self.canvas.get_tk_widget().destroy()
+            if hasattr(self, 'chart_label'):
+                self.chart_label.destroy()
+
+            # Extract AI targets
+            entry = ai_response.get("entry")
+            sl = ai_response.get("stop_loss")
+            tp = ai_response.get("take_profit")
+            
+            hlines_config = None
+            if entry and sl and tp:
+                hlines_config = dict(
+                    hlines=[float(entry), float(sl), float(tp)],
+                    colors=['blue', 'red', 'green'],
+                    linestyle='dashed',
+                    linewidths=1.5
+                )
+
+            # Use only last 100 candles for better visibility
+            plot_df = self.last_df.tail(100)
+            
+            # Create the figure
+            # style 'charles' is classic
+            fig, axlist = mpf.plot(
+                plot_df,
+                type='candle',
+                style='charles',
+                hlines=hlines_config,
+                returnfig=True,
+                figsize=(8, 5),
+                tight_layout=True,
+                datetime_format='%m-%d %H:%M',
+                volume=True
+            )
+
+            # Embed in Tkinter
+            self.canvas = FigureCanvasTkAgg(fig, master=self.chart_frame)
+            self.canvas.draw()
+            self.canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        except Exception as e:
+            self.logger.exception(f"Error rendering chart: {e}")
+            self.chart_label = ctk.CTkLabel(self.chart_frame, text=f"Chart Error: {str(e)}")
+            self.chart_label.grid(row=0, column=0)
 
 if __name__ == "__main__":
     try:

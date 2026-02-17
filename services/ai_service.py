@@ -65,7 +65,7 @@ class AITrader:
             self.openrouter_client = None
 
 
-    def generate_prompt(self, df, news, symbol):
+    def generate_prompt(self, df, symbol, news_context="", calendar_context=""):
         """
         Constructs the prompt and returns the prompt string AND the technical details dict.
         """
@@ -109,8 +109,11 @@ You are a professional Forex trader using a Swing Trading strategy.
 - RSI (14): {rsi}
 - Volatility (ATR): {atr}
 
-**Fundamental News / Context:**
-"{news}"
+**Fundamental News Context:**
+{news_context}
+
+**Economic Calendar Events:**
+{calendar_context}
 
 **Task:**
 Analyze the provided technical and fundamental data.
@@ -130,7 +133,7 @@ Return ONLY a valid JSON object with the following keys:
   "stop_loss": float or null,
   "take_profit": float or null,
   "technical_analysis": "Brief summary of technical factors",
-  "fundamental_analysis": "Brief summary of news impact",
+  "fundamental_analysis": "Brief summary of news & calendar impact",
   "reasoning": "Final combined conclusion"
 }}
 """

@@ -19,7 +19,22 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if not GROQ_API_KEY:
     print("Warning: GROQ_API_KEY not found in environment variables or .env file.")
 
+
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 if not OPENROUTER_API_KEY:
     print("Warning: OPENROUTER_API_KEY not found in environment variables or .env file.")
+
+
+NEWS_API_KEY = os.getenv("NEWS_API_KEY")
+
+if not NEWS_API_KEY:
+    print("Warning: NEWS_API_KEY not found in environment variables or .env file.")
+
+OANDA_API_KEY = os.getenv("OANDA_API_KEY")
+OANDA_ACCOUNT_ID = os.getenv("OANDA_ACCOUNT_ID")
+
+if not OANDA_API_KEY:
+    print("Warning: OANDA_API_KEY not found in environment variables or .env file.")
+if not OANDA_ACCOUNT_ID:
+    print("Warning: OANDA_ACCOUNT_ID not found in environment variables or .env file.")
