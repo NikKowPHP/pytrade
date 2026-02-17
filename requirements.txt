@@ -2,6 +2,6 @@ customtkinter
 yfinance
 pandas
 pandas_ta
-google-generativeai
+google-genai
 python-dotenv
 packaging

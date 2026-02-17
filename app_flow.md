@@ -59,3 +59,50 @@ Here is the comprehensive summary of the **AI Forex Swing Assistant** applicatio
 3.  **Human-in-the-Loop:** You act as the filter for News. You control what the AI reads, preventing it from reacting to "fake news" or irrelevant articles.
 
 Do you want to proceed with writing the final code for this specific flow?
+
+
+
+
+
+
+
+
+#!/bin/bash
+set -e -E
+
+GEMINI_API_KEY="AIzaSyA6DSMMSz7x4dN00F9tjEVoHF7bFFgU-Uc"
+MODEL_ID="gemini-3-flash-preview"
+GENERATE_CONTENT_API="streamGenerateContent"
+
+cat << EOF > request.json
+{
+    "contents": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "INSERT_INPUT_HERE"
+          },
+        ]
+      },
+    ],
+    "generationConfig": {
+      "thinkingConfig": {
+        "thinkingLevel": "HIGH",
+      },
+    },
+    "tools": [
+      {
+        "googleSearch": {
+        }
+      },
+    ],
+}
+EOF
+
+curl \
+-X POST \
+-H "Content-Type: application/json" \
+"https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}:${GENERATE_CONTENT_API}?key=${AIzaSyA6DSMMSz7x4dN00F9tjEVoHF7bFFgU-Uc}" -d '@request.json'
+
+
