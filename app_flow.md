@@ -11,7 +11,7 @@ Here is the comprehensive summary of the **AI Forex Swing Assistant** applicatio
 ### **2. The Application Flow (Step-by-Step)**
 
 #### **Phase 1: Input (Data Gathering)**
-*   **User Action:** You open the GUI and select a pair (e.g., `EURUSD`).
+*   **User Action:** You open the GUI and select a pair from the dropdown menu (e.g., `EURUSD`, `GBPJPY`).
 *   **User Action:** You select the **Timeframe** (e.g., `1H`, `4H`, `1D`) and the **Number of Candles** to analyze.
 *   **User Action:** You copy-paste the latest major economic news or fundamental context into the text box (e.g., *"Fed Chair Powell suggests interest rates will stay high"*).
 *   **System Action (Python):**

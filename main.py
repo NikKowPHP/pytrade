@@ -32,10 +32,17 @@ class ForexApp(ctk.CTk):
             self.input_frame.grid_columnconfigure(1, weight=1)
 
             # Symbol Input
-            self.symbol_label = ctk.CTkLabel(self.input_frame, text="Symbol (e.g., EURUSD):")
+            self.symbol_label = ctk.CTkLabel(self.input_frame, text="Symbol:")
             self.symbol_label.grid(row=0, column=0, padx=10, pady=10, sticky="w")
-            self.symbol_entry = ctk.CTkEntry(self.input_frame, placeholder_text="EURUSD")
-            self.symbol_entry.grid(row=0, column=1, padx=10, pady=10, sticky="ew")
+            
+            self.pairs = [
+                "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD",
+                "EURGBP", "EURJPY", "GBPJPY", "AUDJPY", "CADJPY", "CHFJPY", "EURAUD",
+                "EURCAD", "GBPAUD", "GBPCAD"
+            ]
+            self.symbol_option = ctk.CTkOptionMenu(self.input_frame, values=self.pairs)
+            self.symbol_option.grid(row=0, column=1, padx=10, pady=10, sticky="ew")
+            self.symbol_option.set("EURUSD")
 
             # Timeframe Input
             self.timeframe_label = ctk.CTkLabel(self.input_frame, text="Timeframe:")
@@ -50,6 +57,13 @@ class ForexApp(ctk.CTk):
             self.candles_entry = ctk.CTkEntry(self.input_frame, placeholder_text="100")
             self.candles_entry.grid(row=2, column=1, padx=10, pady=10, sticky="ew")
             self.candles_entry.insert(0, "100")
+
+            # Provider Input
+            self.provider_label = ctk.CTkLabel(self.input_frame, text="AI Provider:")
+            self.provider_label.grid(row=3, column=0, padx=10, pady=10, sticky="w")
+            self.provider_option = ctk.CTkOptionMenu(self.input_frame, values=["Gemini", "Cerebras", "Groq"])
+            self.provider_option.grid(row=3, column=1, padx=10, pady=10, sticky="ew")
+            self.provider_option.set("Gemini")
 
             # News / Fundamentals Input
             self.news_label = ctk.CTkLabel(self, text="Fundamental News / Context:", font=("Roboto", 16))
@@ -87,7 +101,7 @@ class ForexApp(ctk.CTk):
 
     def run_analysis(self):
         try:
-            symbol = self.symbol_entry.get().strip().upper()
+            symbol = self.symbol_option.get()
             timeframe = self.timeframe_option.get()
             news = self.news_textbox.get("1.0", "end").strip()
             
@@ -109,8 +123,9 @@ class ForexApp(ctk.CTk):
             # 3. Generate Prompt
             prompt = self.ai_trader.generate_prompt(df, news, symbol)
             
-            # 4. Call Gemini
-            response = self.ai_trader.analyze(prompt)
+            # 4. Call AI (Gemini or Cerebras)
+            provider = self.provider_option.get()
+            response = self.ai_trader.analyze(prompt, provider=provider)
             
             if "error" in response:
                 self.after(0, lambda: self.update_ui_error(f"AI Error: {response['error']}"))
