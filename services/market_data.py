@@ -10,36 +10,72 @@ class MarketDataProvider:
     def fetch_data(self, symbol, interval):
         """
         Fetches OHLC data using yfinance.
+        Handles '4h' interval by fetching '1h' and resampling.
         """
         try:
             self.logger.info(f"Fetching data for {symbol} with interval {interval}")
-            # yfinance tickers for forex often have '=X' suffix, e.g., 'EURUSD=X'
-            # Also support Crypto if needed, but assuming Forex for now based on context
+            
+            # 1. Ticker Resolution
             if not symbol.endswith('=X') and len(symbol) == 6: 
                  ticker_symbol = f"{symbol}=X"
             else:
                 ticker_symbol = symbol
 
-            ticker = yf.Ticker(ticker_symbol)
+            # 2. Interval & Period Resolution
+            # Yahoo Finance valid intervals: 1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo
+            # It DOES NOT support '4h'. We must resample.
+            request_interval = interval
+            resample_needed = False
             
-            # Map user timeframe to reasonable fetch limit to ensure enough data for EMA 200
-            # 200 candles needed + buffer
-            if interval == '1h':
-                 fetch_period = "1mo" # 1mo ~ 720h (trading 24/5? approx 500 candles) - plenty
-            elif interval == '4h':
-                 fetch_period = "6mo" # 1mo is ~ 120 candles (too short for 200 EMA). 6mo is safer.
+            if interval == '4h':
+                request_interval = '1h'
+                resample_needed = True
+                # We need enough 1h candles to form 200+ 4h candles. 
+                # 200 * 4 = 800 hours. 1y is safe (approx 6000 trading hours).
+                fetch_period = "1y" 
+            elif interval == '1h':
+                 fetch_period = "1y" 
             elif interval == '1d':
-                 fetch_period = "2y"  # 1y is ~ 260 candles. 2y is safer.
+                 fetch_period = "5y"
             else:
                  fetch_period = "1y"
 
-            df = ticker.history(period=fetch_period, interval=interval)
+            # 3. Fetch Data using download (more robust)
+            # auto_adjust=False ensures we get raw OHLC (sometimes adjusted close messes up tech analysis)
+            df = yf.download(
+                tickers=ticker_symbol, 
+                period=fetch_period, 
+                interval=request_interval, 
+                progress=False,
+                auto_adjust=False 
+            )
             
             if df.empty:
                 self.logger.warning(f"No data found for symbol: {symbol}")
                 return None, "No data found for symbol."
             
-            self.logger.debug(f"Fetched {len(df)} rows for {symbol} {df}")
+            # 4. Handle MultiIndex Columns (Newer yfinance versions return (Price, Ticker))
+            if isinstance(df.columns, pd.MultiIndex):
+                # Flatten: If columns are ('Close', 'EURUSD=X'), keep 'Close'
+                df.columns = df.columns.get_level_values(0)
+
+            # 5. Resample if needed (e.g., 1h -> 4h)
+            if resample_needed:
+                self.logger.info(f"Resampling {request_interval} data to {interval}")
+                # Define aggregation rules
+                agg_dict = {
+                    'Open': 'first',
+                    'High': 'max',
+                    'Low': 'min',
+                    'Close': 'last'
+                }
+                if 'Volume' in df.columns:
+                    agg_dict['Volume'] = 'sum'
+
+                # Perform resampling
+                df = df.resample('4h').agg(agg_dict).dropna()
+
+            self.logger.debug(f"Fetched {len(df)} rows for {symbol}")
             return df, None
         except Exception as e:
             self.logger.error(f"Error fetching data for {symbol}: {str(e)}")

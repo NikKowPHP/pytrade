@@ -3,10 +3,8 @@ import threading
 from services.market_data import MarketDataProvider
 from services.ai_service import AITrader
 from services.news_service import NewsService
+from services.chart_service import ChartService
 from services.logger import Logger
-import mplfinance as mpf
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import matplotlib.pyplot as plt
 
 class ForexApp(ctk.CTk):
     def __init__(self):
@@ -22,6 +20,7 @@ class ForexApp(ctk.CTk):
             self.data_provider = MarketDataProvider()
             self.ai_trader = AITrader()
             self.news_service = NewsService()
+            self.chart_service = ChartService()
 
             # Layout Configuration
             self.grid_columnconfigure(0, weight=1)
@@ -103,9 +102,7 @@ class ForexApp(ctk.CTk):
             
             self.chart_label = ctk.CTkLabel(self.chart_frame, text="Market Chart will appear here after analysis", font=("Roboto", 14))
             self.chart_label.grid(row=0, column=0)
-            
-            self.canvas = None
-            self.last_df = None # Store to re-render if needed
+            self.last_df = None
 
         except Exception as e:
             self.logger.exception(f"Error initializing UI: {e}")
@@ -257,58 +254,10 @@ class ForexApp(ctk.CTk):
              self.logger.exception(f"Error updating UI result: {e}")
 
     def render_chart(self, ai_response):
-        try:
-            if self.last_df is None or self.last_df.empty:
-                return
-
-            self.logger.info("Rendering mplfinance chart")
-            
-            # Clear previous chart
-            if self.canvas:
-                self.canvas.get_tk_widget().destroy()
-            if hasattr(self, 'chart_label'):
-                self.chart_label.destroy()
-
-            # Extract AI targets
-            entry = ai_response.get("entry")
-            sl = ai_response.get("stop_loss")
-            tp = ai_response.get("take_profit")
-            
-            hlines_config = None
-            if entry and sl and tp:
-                hlines_config = dict(
-                    hlines=[float(entry), float(sl), float(tp)],
-                    colors=['blue', 'red', 'green'],
-                    linestyle='dashed',
-                    linewidths=1.5
-                )
-
-            # Use only last 100 candles for better visibility
-            plot_df = self.last_df.tail(100)
-            
-            # Create the figure
-            # style 'charles' is classic
-            fig, axlist = mpf.plot(
-                plot_df,
-                type='candle',
-                style='charles',
-                hlines=hlines_config,
-                returnfig=True,
-                figsize=(8, 5),
-                tight_layout=True,
-                datetime_format='%m-%d %H:%M',
-                volume=True
-            )
-
-            # Embed in Tkinter
-            self.canvas = FigureCanvasTkAgg(fig, master=self.chart_frame)
-            self.canvas.draw()
-            self.canvas.get_tk_widget().pack(fill="both", expand=True)
-
-        except Exception as e:
-            self.logger.exception(f"Error rendering chart: {e}")
-            self.chart_label = ctk.CTkLabel(self.chart_frame, text=f"Chart Error: {str(e)}")
-            self.chart_label.grid(row=0, column=0)
+        """
+        Uses ChartService to render the candlestick chart.
+        """
+        self.chart_service.create_chart(self.chart_frame, self.last_df, ai_response)
 
 if __name__ == "__main__":
     try:
