@@ -157,3 +157,38 @@ class MarketDataProvider:
         except Exception as e:
             self.logger.error(f"Error calculating indicators: {e}")
             return df
+
+    def calculate_pivots(self, df):
+        """
+        Calculates Standard Pivot Points, Supports, and Resistances based on the last complete candle.
+        """
+        try:
+            if df is None or df.empty:
+                return {}
+
+            # Use the second to last row (completed candle) for accurate pivot calculation
+            # If we use the current live candle, the pivots will keep shifting.
+            last_complete = df.iloc[-2] 
+
+            high = last_complete['High']
+            low = last_complete['Low']
+            close = last_complete['Close']
+
+            # Standard Pivot Points
+            pp = (high + low + close) / 3
+            r1 = (2 * pp) - low
+            s1 = (2 * pp) - high
+            r2 = pp + (high - low)
+            s2 = pp - (high - low)
+            r3 = high + 2 * (pp - low)
+            s3 = low - 2 * (high - pp)
+
+            return {
+                "pivot": pp,
+                "r1": r1, "s1": s1,
+                "r2": r2, "s2": s2,
+                "r3": r3, "s3": s3
+            }
+        except Exception as e:
+            self.logger.error(f"Error calculating pivots: {e}")
+            return {}

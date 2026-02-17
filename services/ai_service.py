@@ -65,127 +65,121 @@ class AITrader:
             self.openrouter_client = None
 
 
-    def generate_prompt(self, df, symbol, news_context="", calendar_context=""):
+    def generate_prompt(self, df, symbol, timeframe, news_context="", calendar_context="", pivots=None, mtf_trend=""):
         """
-        Constructs the prompt and returns the prompt string AND the technical details dict.
+        Constructs a detailed prompt including Pivots and Multi-Timeframe context.
         """
         try:
-            if df is None or df.empty:
-                self.logger.error("Dataframe is empty or None in generate_prompt")
-                return "Error: No data available for analysis.", {}
-
-            # Get latest values
             latest = df.iloc[-1]
             
-            # Determine Trend
-            trend = "NEUTRAL"
-            if pd.notna(latest['EMA_200']):
-                if latest['Close'] > latest['EMA_200']:
-                    trend = "BULLISH"
-                else:
-                    trend = "BEARISH"
-            
-            # Format values
-            rsi = f"{latest['RSI']:.2f}" if pd.notna(latest['RSI']) else "N/A"
-            atr = f"{latest['ATR']:.4f}" if pd.notna(latest['ATR']) else "N/A"
-            price = f"{latest['Close']:.5f}"
-            
-            # Create a dictionary for the UI to display exactly what the AI saw
-            technical_details = {
-                "symbol": symbol,
-                "price": price,
-                "trend": trend,
-                "rsi": rsi,
-                "atr": atr,
-                "ema_200": f"{latest['EMA_200']:.5f}" if pd.notna(latest['EMA_200']) else "N/A"
-            }
+            # Format Pivot Levels
+            pivot_text = "N/A"
+            if pivots:
+                pivot_text = (
+                    f"Pivot: {pivots['pivot']:.5f}\n"
+                    f"Resistances: R1 {pivots['r1']:.5f}, R2 {pivots['r2']:.5f}\n"
+                    f"Supports: S1 {pivots['s1']:.5f}, S2 {pivots['s2']:.5f}"
+                )
 
+            # Construct Prompt
             prompt = f"""
-You are a professional Forex trader using a Swing Trading strategy.
+You are an expert Forex Swing Trader. Analyze the attached chart image and the data below.
 
-**Market Data for {symbol}:**
-- Current Price: {price}
-- Trend (vs 200 EMA): {trend}
-- RSI (14): {rsi}
-- Volatility (ATR): {atr}
+**1. MARKET CONTEXT ({symbol} - {timeframe})**
+- Price: {latest['Close']:.5f}
+- RSI(14): {latest['RSI']:.2f}
+- ATR(14): {latest['ATR']:.4f}
+- EMA 200: {latest['EMA_200']:.5f}
 
-**Fundamental News Context:**
+**2. HIGHER TIMEFRAME CONTEXT**
+{mtf_trend}
+
+**3. KEY LEVELS (Standard Pivots)**
+{pivot_text}
+
+**4. FUNDAMENTALS**
 {news_context}
-
-**Economic Calendar Events:**
 {calendar_context}
 
-**Task:**
-Analyze the provided technical and fundamental data.
-1. Analyze the correlation between the Technicals and Fundamentals.
-2. Determine the trade decision: BUY, SELL, or WAIT.
-3. If acting (BUY/SELL):
-    - Set Entry Price.
-    - Set Stop Loss (SL) based on the ATR (approx 1.5x - 2x ATR).
-    - Set Take Profit (TP) aiming for at least a 1:2 Risk-Reward Ratio.
+**TASK:**
+1. **Visual Analysis:** Look at the chart image. Identify patterns (Flags, Triangles, Double Tops/Bottoms) and Price Action structures.
+2. **Correlation:** Do the visual patterns match the RSI and Pivot levels?
+3. **Decision:** Provide a BUY, SELL, or WAIT recommendation.
+4. **Levels:** precise Entry, Stop Loss (use ATR or Swing Lows), and Take Profit (use Pivot R1/S1/R2/S2).
 
-**Output Format:**
-Return ONLY a valid JSON object with the following keys:
+**OUTPUT JSON:**
 {{
-  "decision": "BUY" | "SELL" | "WAIT",
+  "decision": "BUY/SELL/WAIT",
   "confidence_score": "0-100",
-  "entry": float or null,
-  "stop_loss": float or null,
-  "take_profit": float or null,
-  "technical_analysis": "Brief summary of technical factors",
-  "fundamental_analysis": "Brief summary of news & calendar impact",
-  "reasoning": "Final combined conclusion"
+  "entry": float,
+  "stop_loss": float,
+  "take_profit": float,
+  "technical_analysis": "Combine visual chart patterns with indicator data.",
+  "fundamental_analysis": "Impact of news.",
+  "reasoning": "Final verdict."
 }}
 """
-            # LOG THE PROMPT
-            self.logger.debug(f"--- GENERATED PROMPT FOR {symbol} ---\n{prompt}\n-----------------------------------")
-            
-            return prompt, technical_details
-            
+            # Return technical details for UI logic
+            tech_details = {
+                "symbol": symbol,
+                "price": f"{latest['Close']:.5f}",
+                "trend": "See Analysis",
+                "rsi": f"{latest['RSI']:.2f}",
+                "atr": f"{latest['ATR']:.4f}"
+            }
+
+            return prompt, tech_details
+
         except Exception as e:
             self.logger.error(f"Error generating prompt: {e}")
-            return f"Error generating prompt: {e}", {}
+            return "Error", {}
 
-    def analyze(self, prompt, provider="gemini", model=None):
+    def analyze(self, prompt, image=None, provider="gemini", model=None):
         """
-        Routes analysis to the selected provider.
+        Routes analysis, now accepting an image object.
         """
-        self.logger.info(f"Analyzing with provider: {provider}, model: {model}")
+        self.logger.info(f"Analyzing with {provider} (Image present: {image is not None})")
         
-        response_data = {}
+        # Currently only implementing Vision for Gemini as it's the most accessible multimodal model in this stack
+        if provider.lower() == "gemini":
+            return self._analyze_gemini(prompt, image, model)
+        
+        # Fallback for others (Text only)
+        if image:
+            self.logger.warning(f"Provider {provider} does not support image input in this implementation. Ignoring image.")
         
         if provider.lower() == "cerebras":
-            response_data = self._analyze_cerebras(prompt, model)
+            return self._analyze_cerebras(prompt, model)
         elif provider.lower() == "groq":
-            response_data = self._analyze_groq(prompt, model)
+            return self._analyze_groq(prompt, model)
         elif provider.lower() == "openrouter":
-            response_data = self._analyze_openrouter(prompt, model)
+            return self._analyze_openrouter(prompt, model)
         else:
-            response_data = self._analyze_gemini(prompt, model)
-            
-        return response_data
+            return {"error": "Unknown provider"}
 
-    def _analyze_gemini(self, prompt, model=None):
+    def _analyze_gemini(self, prompt, image=None, model=None):
         try:
-            self.logger.info("Starting Gemini analysis request")
             if not self.gemini_client:
                 return {"error": "Gemini API Key missing"}
             
             model_id = model if model else self.gemini_model_id
             
-            # Using generate_content for simplicity as streaming isn't strictly needed for this logic
+            # Prepare content list
+            contents = [prompt]
+            if image:
+                contents.append(image)
+
             response = self.gemini_client.models.generate_content(
                 model=model_id,
-                contents=prompt,
+                contents=contents,
                 config=types.GenerateContentConfig(
-                    response_mime_type="application/json" # Enforce JSON
+                    response_mime_type="application/json"
                 )
             )
-            
             return self._parse_json_response(response.text)
 
         except Exception as e:
-            self.logger.exception(f"Exception during Gemini analysis: {e}")
+            self.logger.exception(f"Gemini Analysis Error: {e}")
             return {"error": str(e)}
 
     def _analyze_cerebras(self, prompt, model=None):

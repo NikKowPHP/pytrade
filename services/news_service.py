@@ -85,9 +85,8 @@ class NewsService:
 
     def fetch_economic_calendar(self, symbol=None):
         """
-        Fetches economic calendar events from ForexFactory XML.
-        Filters by currency if symbol is provided (e.g. EURUSD -> EUR, USD).
-        Returns a formatted string summary of high/medium impact events.
+        Fetches events and checks for imminent High Impact risks.
+        Returns tuple: (formatted_text, warning_flag)
         """
         try:
             self.logger.info("Fetching Economic Calendar from ForexFactory")
@@ -98,17 +97,6 @@ class NewsService:
             response = requests.get(self.ff_calendar_url, headers=headers)
             response.raise_for_status()
             
-            # The XML structure from FF is roughly:
-            # <weeklyevents>
-            #   <event>
-            #     <title>...</title>
-            #     <country>USD</country>
-            #     <date>2026-02-17</date>
-            #     <time>8:30am</time>
-            #     <impact>High</impact>
-            #   </event>
-            # </weeklyevents>
-
             root = ET.fromstring(response.content)
             
             # Determine relevant currencies
@@ -116,33 +104,47 @@ class NewsService:
             if symbol and len(symbol) == 6:
                 relevant_currencies = [symbol[:3], symbol[3:]] # e.g. ['EUR', 'USD']
             
-            events_text = "ECONOMIC CALENDAR events (This Week):\n"
+            events_text = "ECONOMIC CALENDAR (This Week):\n"
             found_events = False
+            
+            # Risk Flag
+            high_impact_imminent = False
+            now = datetime.now() # Server time (Make sure to align timezones in production)
 
             for event in root.findall('event'):
                 country = event.find('country').text
                 impact = event.find('impact').text
                 title = event.find('title').text
-                date_str = event.find('date').text
-                time_str = event.find('time').text
+                date_str = event.find('date').text # YYYY-MM-DD
+                time_str = event.find('time').text # e.g. 8:30am
                 
                 # Filter by impact
                 if impact not in ['High', 'Medium']:
                     continue
                 
                 # Filter by currency/country if relevant_currencies are set
-                # Note: FF uses currency codes in <country> (e.g. 'USD', 'EUR')
                 if relevant_currencies and country not in relevant_currencies:
                     continue
 
+                # Formatting
                 events_text += f"- [{date_str} {time_str}] ({country}) {title} [{impact}]\n"
                 found_events = True
+                
+                # Check Time Delta for High Impact
+                if impact == 'High':
+                    try:
+                        # LOGIC: Check if date is today
+                        if date_str == now.strftime("%Y-%m-%d"):
+                            events_text += "   !!! HIGH IMPACT EVENT TODAY !!!\n"
+                            high_impact_imminent = True
+                    except Exception:
+                        pass
             
             if not found_events:
-                 events_text += "No high/medium impact events found for these currencies this week.\n"
+                 events_text += "No significant events found.\n"
 
-            return events_text
+            return events_text, high_impact_imminent
 
         except Exception as e:
             self.logger.error(f"Error fetching Economic Calendar: {e}")
-            return "Error fetching Economic Calendar.\n"
+            return "Error fetching calendar.\n", False

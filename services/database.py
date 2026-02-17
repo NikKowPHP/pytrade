@@ -43,6 +43,18 @@ class Database:
                     reasoning TEXT
                 )
             ''')
+            
+            # Check if 'result' column exists (migration hack for existing sqlite)
+            try:
+                cursor.execute("SELECT result FROM trade_journal LIMIT 1")
+            except Exception:
+                # Add columns if they don't exist
+                try:
+                    cursor.execute("ALTER TABLE trade_journal ADD COLUMN result TEXT")
+                    cursor.execute("ALTER TABLE trade_journal ADD COLUMN exit_price REAL")
+                except Exception:
+                    pass # Columns might already exist in a fresh create
+            
             conn.commit()
             conn.close()
         except Exception as e:
@@ -201,3 +213,39 @@ class Database:
         except Exception as e:
             self.logger.error(f"Error loading data from DB: {e}")
             return pd.DataFrame()
+
+    def get_open_trades(self):
+        """Fetches trades that haven't been graded yet (result is NULL or 'OPEN')."""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            conn.row_factory = sqlite3.Row # Allow dict-like access
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM trade_journal 
+                WHERE (result IS NULL OR result = 'OPEN') 
+                AND entry IS NOT NULL 
+                AND stop_loss IS NOT NULL 
+                AND take_profit IS NOT NULL
+            ''')
+            rows = [dict(row) for row in cursor.fetchall()]
+            conn.close()
+            return rows
+        except Exception as e:
+            self.logger.error(f"Error fetching open trades: {e}")
+            return []
+
+    def update_trade_result(self, trade_id, result, exit_price):
+        """Updates a trade with WIN/LOSS/BREAKEVEN."""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE trade_journal 
+                SET result = ?, exit_price = ? 
+                WHERE id = ?
+            ''', (result, exit_price, trade_id))
+            conn.commit()
+            conn.close()
+            self.logger.info(f"Updated trade {trade_id} result to {result}")
+        except Exception as e:
+            self.logger.error(f"Error updating trade result: {e}")

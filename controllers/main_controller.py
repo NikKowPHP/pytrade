@@ -2,6 +2,7 @@ import threading
 import concurrent.futures
 from services.logger import Logger
 from services.scanner_service import ScannerService
+from services.performance_service import PerformanceService
 
 class MainController:
     def __init__(self, view, services):
@@ -13,23 +14,31 @@ class MainController:
         self.scanner = ScannerService(self.market_data)
         self.logger = Logger()
         self.last_df = None
-        self.current_analysis_data = None # Store result here to save later
-
+        self.current_analysis_data = None
+        
+        self.performance_service = PerformanceService(self.market_data.db)
+        
+        # Inject AI into scanner for smart scanning
+        self.scanner.ai_service = self.ai_trader
+        
         # List of pairs to scan
         self.scan_pairs = [
             "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", 
             "NZDUSD", "EURGBP", "EURJPY", "GBPJPY", "XAUUSD", "BTC-USD"
         ]
-        
-        # Update View's dropdown
         self.view.symbol_option.configure(values=self.scan_pairs)
 
     def on_startup(self):
         """Called when UI is ready."""
-        threading.Thread(target=self._load_initial_data, daemon=True).start()
-        self.load_journal_data() # Populate history on start
+        threading.Thread(target=self._startup_worker, daemon=True).start()
+        self.load_journal_data()
 
-    def _load_initial_data(self):
+    def _startup_worker(self):
+        """Runs on app startup."""
+        # 1. Run Grader
+        threading.Thread(target=self.performance_service.run_grader, daemon=True).start()
+        
+        # 2. Existing startup logic
         try:
             inputs = self.view.get_inputs()
             symbol = inputs['symbol']
@@ -42,23 +51,224 @@ class MainController:
                 self.view.after(0, lambda: self.view.display_error(error))
                 return
 
+            # Calculations
             self.last_df = self.market_data.calculate_indicators(df)
             
-            # Generate chart (no AI overlays yet)
-            fig = self.chart_service.create_chart_figure(self.last_df, None)
+            # Step 2: Render Chart (Main Thread)
+            self.view.after(0, self._render_chart_only)
+            self.view.after(0, lambda: self.view.update_status(f"Ready. {symbol} loaded."))
             
-            self.view.after(0, lambda: self.view.embed_chart(fig))
-            self.view.after(0, lambda: self.view.update_status(f"Ready. {symbol} data loaded."))
         except Exception as e:
             self.logger.exception(f"Startup error: {e}")
-            self.view.after(0, lambda e=e: self.view.display_error(str(e)))
+
+    def _render_chart_only(self):
+        """Executed on Main Thread to safely use Matplotlib."""
+        try:
+            if self.last_df is not None:
+                fig = self.chart_service.create_chart_figure(self.last_df, None)
+                self.view.embed_chart(fig)
+        except Exception as e:
+            self.logger.error(f"Chart render error: {e}")
 
     def load_symbol(self, symbol):
         """Called when user clicks a button in the scanner list."""
         self.view.symbol_var.set(symbol)
-        # Trigger the standard load (chart update)
-        threading.Thread(target=self._load_initial_data, daemon=True).start()
+        # Trigger the standard load
+        threading.Thread(target=self._startup_worker, daemon=True).start()
 
+    # --- ANALYSIS PIPELINE ---
+
+    def start_analysis(self):
+        """Starts the 3-step analysis pipeline."""
+        self.view.analyze_btn.configure(state="disabled", text="Analyzing...")
+        self.view.result_box.configure(state="normal")
+        self.view.result_box.delete("0.0", "end")
+        self.view.update_status("1. Fetching Market Data...")
+        
+        # Step 1: Data (Thread)
+        threading.Thread(target=self._pipeline_step_1_data, daemon=True).start()
+
+    def _pipeline_step_1_data(self):
+        try:
+            inputs = self.view.get_inputs()
+            symbol = inputs['symbol']
+            main_tf = inputs['timeframe']
+
+            # Fetch Data
+            df, error = self.market_data.fetch_data(symbol, main_tf)
+            if error:
+                self.view.after(0, lambda: self.view.display_error(error))
+                self.view.after(0, lambda: self.view.analyze_btn.configure(state="normal", text="Analyze Symbol"))
+                return
+            
+            self.last_df = self.market_data.calculate_indicators(df)
+            
+            # 2. Fetch Higher Timeframe Context
+            htf_context = "Higher Timeframe Data Unavailable"
+            try:
+                htf_map = {'1h': '4h', '4h': '1d', '1d': '1wk'}
+                htf = htf_map.get(main_tf, '1d')
+                
+                df_htf, err_htf = self.market_data.fetch_data(symbol, htf)
+                if not err_htf and df_htf is not None:
+                    df_htf = self.market_data.calculate_indicators(df_htf)
+                    last_htf = df_htf.iloc[-1]
+                    
+                    htf_trend = "BULLISH" if last_htf['Close'] > last_htf['EMA_200'] else "BEARISH"
+                    htf_context = (
+                        f"**{htf.upper()} Trend:** {htf_trend}\n"
+                        f"- RSI: {last_htf['RSI']:.2f}\n"
+                        f"- Price vs EMA200: {'Above' if htf_trend == 'BULLISH' else 'Below'}"
+                    )
+            except Exception as e:
+                self.logger.error(f"HTF Fetch Error: {e}")
+
+            # Trigger Step 2 (Main Thread)
+            self.view.after(0, lambda: self._pipeline_step_2_visuals(htf_context))
+            
+        except Exception as e:
+            self.logger.exception(f"Pipeline Step 1 Error: {e}")
+            self.view.after(0, lambda: self.view.display_error(str(e)))
+            self.view.after(0, lambda: self.view.analyze_btn.configure(state="normal", text="Analyze Symbol"))
+
+    def _pipeline_step_2_visuals(self, htf_context):
+        """
+        Step 2: Generate Charts & Images (Main Thread).
+        Matplotlib is NOT thread-safe, so this MUST be here.
+        """
+        try:
+            self.view.append_status("\n2. Generating Vision Data...")
+            
+            # 1. Update UI Chart immediately
+            fig = self.chart_service.create_chart_figure(self.last_df, None)
+            self.view.embed_chart(fig)
+            
+            # 2. Generate Image for AI
+            chart_image = self.chart_service.generate_chart_image(self.last_df)
+            
+            # Trigger Step 3 (Thread)
+            threading.Thread(target=self._pipeline_step_3_ai, args=(chart_image, htf_context), daemon=True).start()
+            
+        except Exception as e:
+            self.logger.exception(f"Pipeline Step 2 Error: {e}")
+            self.view.display_error(f"Vision Error: {e}")
+            self.view.analyze_btn.configure(state="normal", text="Analyze Symbol")
+
+    def _pipeline_step_3_ai(self, chart_image, htf_context):
+        """Step 3: Intelligence (Thread)."""
+        try:
+            inputs = self.view.get_inputs()
+            symbol = inputs['symbol']
+            
+            self.view.after(0, lambda: self.view.append_status("\n3. Fetching Fundamentals..."))
+            
+            # Fundamentals
+            auto_news = self.news_service.fetch_news(symbol)
+            # NEW: Receive tuple (text, is_danger)
+            calendar, is_high_impact = self.news_service.fetch_economic_calendar(symbol)
+            
+            # SAFETY RULE
+            if is_high_impact:
+                msg = "⚠️ HIGH IMPACT EVENT DETECTED TODAY. TRADING IS RISKY."
+                self.view.after(0, lambda: self.view.append_status(f"\n\n{msg}"))
+                # We inject this warning strongly into the prompt
+                calendar = f"!!! WARNING: {msg} !!!\n{calendar}"
+                
+            full_context = f"{inputs['news_context']}\n\n{auto_news}" if inputs['news_context'] else auto_news
+            
+            # Pivots
+            pivots = self.market_data.calculate_pivots(self.last_df)
+
+            self.view.after(0, lambda: self.view.append_status("\n4. Consulting AI (Vision + Data)..."))
+
+            # Generate Prompt
+            prompt, tech_details = self.ai_trader.generate_prompt(
+                self.last_df, 
+                symbol, 
+                inputs['timeframe'],
+                news_context=full_context, 
+                calendar_context=calendar,
+                pivots=pivots,
+                mtf_trend=htf_context
+            )
+
+            # Call AI
+            ai_response = self.ai_trader.analyze(
+                prompt, 
+                image=chart_image,
+                provider=inputs['provider'], 
+                model=inputs['model']
+            )
+
+            if "error" in ai_response:
+                self.view.after(0, lambda: self.view.display_error(ai_response['error']))
+                self.view.after(0, lambda: self.view.analyze_btn.configure(state="normal", text="Analyze Symbol"))
+                return
+
+            # Finish
+            self.view.after(0, lambda: self._finalize_results(ai_response, tech_details))
+
+        except Exception as e:
+            self.logger.exception(f"Pipeline Step 3 Error: {e}")
+            self.view.after(0, lambda: self.view.display_error(str(e)))
+            self.view.after(0, lambda: self.view.analyze_btn.configure(state="normal", text="Analyze Symbol"))
+
+    def _finalize_results(self, ai_response, tech_details):
+        """Update UI with final results (Main Thread)."""
+        report = self._format_report(ai_response, tech_details)
+        self.view.display_report(report)
+        self.view.analyze_btn.configure(state="normal", text="Analyze Symbol")
+        
+        # Store data
+        self.current_analysis_data = {
+            "symbol": tech_details['symbol'],
+            "timeframe": self.view.timeframe_var.get(),
+            "provider": self.view.provider_var.get(),
+            "decision": ai_response.get('decision', 'WAIT'),
+            "entry": ai_response.get('entry'),
+            "stop_loss": ai_response.get('stop_loss'),
+            "take_profit": ai_response.get('take_profit'),
+            "confidence": ai_response.get('confidence_score', 0),
+            "reasoning": ai_response.get('reasoning', '')
+        }
+        self.view.save_btn.configure(state="normal", fg_color="#2B823A")
+        
+        # Update chart with levels
+        fig = self.chart_service.create_chart_figure(self.last_df, ai_response)
+        self.view.embed_chart(fig)
+
+    def _format_report(self, ai, tech):
+        return (
+            f"\n{'='*30}\n DECISION: {ai.get('decision', 'N/A')} ({ai.get('confidence_score', '0')}%) \n{'='*30}\n\n"
+            f"--- SETUP ---\nEntry: {ai.get('entry')}\nSL: {ai.get('stop_loss')}\nTP: {ai.get('take_profit')}\n\n"
+            f"--- DATA ---\nPrice: {tech.get('price')} | Trend: {tech.get('trend')}\n"
+            f"RSI: {tech.get('rsi')} | ATR: {tech.get('atr')}\n\n"
+            f"--- REASONING ---\n{ai.get('reasoning', 'N/A')}"
+        )
+
+    # --- Journal ---
+    def save_current_analysis(self):
+        if self.current_analysis_data:
+            success = self.market_data.db.save_analysis(self.current_analysis_data)
+            if success:
+                self.view.save_btn.configure(state="disabled", text="Saved!", fg_color="#555555")
+                self.load_journal_data()
+            else:
+                self.view.display_error("Failed to save to database.")
+
+    def load_journal_data(self):
+        """Fetches history and updates UI."""
+        rows = self.market_data.db.get_journal_entries()
+        self.view.after(0, lambda: self.view.populate_journal(rows))
+
+    def get_models_for_provider(self, provider):
+        if provider == "Gemini": return ["gemini-2.0-flash-exp", "gemini-1.5-flash"]
+        if provider == "Cerebras": return ["llama3.1-70b", "llama3.1-8b"]
+        if provider == "Groq": return ["llama-3.1-70b-versatile", "mixtral-8x7b-32768"]
+        if provider == "OpenRouter": return ["stepfun/step-3.5-flash:free", "google/gemini-2.0-flash-lite-preview-02-05:free"]
+        return []
+
+    # --- Scanner ---
     def run_market_scan(self):
         """Scans all pairs in background."""
         threading.Thread(target=self._scan_worker, daemon=True).start()
@@ -89,97 +299,3 @@ class MainController:
         self.view.after(0, self.view.reset_scan_button)
         if found_count == 0:
             self.view.after(0, lambda: self.view.update_status("No opportunities found."))
-
-    def get_models_for_provider(self, provider):
-        if provider == "Gemini": return ["gemini-2.0-flash-exp", "gemini-1.5-flash"]
-        if provider == "Cerebras": return ["llama3.1-70b", "llama3.1-8b"]
-        if provider == "Groq": return ["llama-3.1-70b-versatile", "mixtral-8x7b-32768"]
-        if provider == "OpenRouter": return ["stepfun/step-3.5-flash:free", "google/gemini-2.0-flash-lite-preview-02-05:free"]
-        return []
-
-    def start_analysis(self):
-        threading.Thread(target=self._run_analysis_pipeline, daemon=True).start()
-
-    def _run_analysis_pipeline(self):
-        try:
-            inputs = self.view.get_inputs()
-            symbol = inputs['symbol']
-            
-            self.view.after(0, lambda: self.view.update_status("1. Fetching Market Data..."))
-            
-            # 1. Data
-            df, error = self.market_data.fetch_data(symbol, inputs['timeframe'])
-            if error:
-                self.view.after(0, lambda: self.view.display_error(error))
-                return
-            
-            self.last_df = self.market_data.calculate_indicators(df)
-
-            # 2. News
-            self.view.after(0, lambda: self.view.append_status("\n2. Fetching News & Calendar..."))
-            auto_news = self.news_service.fetch_news(symbol)
-            calendar = self.news_service.fetch_economic_calendar(symbol)
-            full_context = f"{inputs['news_context']}\n\n{auto_news}" if inputs['news_context'] else auto_news
-
-            # 3. AI
-            self.view.after(0, lambda: self.view.append_status("\n3. Consulting AI..."))
-            prompt, tech_details = self.ai_trader.generate_prompt(
-                self.last_df, symbol, news_context=full_context, calendar_context=calendar
-            )
-            
-            ai_response = self.ai_trader.analyze(prompt, provider=inputs['provider'], model=inputs['model'])
-            
-            if "error" in ai_response:
-                self.view.after(0, lambda: self.view.display_error(ai_response['error']))
-                return
-
-            # 4. Result Formatting
-            report = self._format_report(ai_response, tech_details)
-            
-            # Store for saving
-            self.current_analysis_data = {
-                "symbol": symbol,
-                "timeframe": inputs['timeframe'],
-                "provider": inputs['provider'],
-                "decision": ai_response.get('decision', 'WAIT'),
-                "entry": ai_response.get('entry'),
-                "stop_loss": ai_response.get('stop_loss'),
-                "take_profit": ai_response.get('take_profit'),
-                "confidence": ai_response.get('confidence_score', 0),
-                "reasoning": ai_response.get('reasoning', '')
-            }
-
-            # Enable Save Button in View
-            self.view.after(0, lambda: self.view.save_btn.configure(state="normal", fg_color="#2B823A", text="Save to Journal"))
-            
-            self.view.after(0, lambda: self.view.display_report(report))
-
-            # 5. Chart Update
-            fig = self.chart_service.create_chart_figure(self.last_df, ai_response)
-            self.view.after(0, lambda: self.view.embed_chart(fig))
-
-        except Exception as e:
-            self.logger.exception(f"Analysis error: {e}")
-            self.view.after(0, lambda e=e: self.view.display_error(str(e)))
-
-    def _format_report(self, ai, tech):
-        return (
-            f"\n{'='*30}\n DECISION: {ai.get('decision', 'N/A')} ({ai.get('confidence_score', '0')}%) \n{'='*30}\n\n"
-            f"--- SETUP ---\nEntry: {ai.get('entry')}\nSL: {ai.get('stop_loss')}\nTP: {ai.get('take_profit')}\n\n"
-            f"--- DATA ---\nPrice: {tech.get('price')} | Trend: {tech.get('trend')}\nRSI: {tech.get('rsi')}\n\n"
-            f"--- REASONING ---\n{ai.get('reasoning', 'N/A')}"
-        )
-
-    def save_current_analysis(self):
-        if self.current_analysis_data:
-            success = self.market_data.db.save_analysis(self.current_analysis_data)
-            if success:
-                self.view.save_btn.configure(state="disabled", text="Saved!", fg_color="#555555")
-                self.load_journal_data() # Refresh table
-            else:
-                self.view.display_error("Failed to save to database.")
-
-    def load_journal_data(self):
-        """Fetches history and updates UI."""
-        rows = self.market_data.db.get_journal_entries()
-        self.view.after(0, lambda: self.view.populate_journal(rows))

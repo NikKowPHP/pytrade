@@ -1,4 +1,7 @@
 import mplfinance as mpf
+import io
+from PIL import Image
+import matplotlib.pyplot as plt
 from services.logger import Logger
 
 class ChartService:
@@ -60,4 +63,40 @@ class ChartService:
 
         except Exception as e:
             self.logger.error(f"Error creating chart figure: {e}")
+            return None
+            
+    def generate_chart_image(self, df):
+        """
+        Generates a PNG image of the chart in memory for AI consumption.
+        """
+        try:
+            if df is None or df.empty:
+                return None
+            
+            # Simple clean chart for AI (last 100 candles)
+            plot_df = df.tail(100)
+            
+            # We use a specific style to make it clear for vision models
+            fig, _ = mpf.plot(
+                plot_df, 
+                type='candle', 
+                style='charles', 
+                volume=True, 
+                returnfig=True, 
+                figsize=(10, 6),
+                tight_layout=True,
+                axisoff=False # AI needs to see the axis numbers
+            )
+            
+            # Save to buffer
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', dpi=100)
+            buf.seek(0)
+            plt.close(fig) # Close to free memory
+            
+            # Convert to PIL Image (standard for many SDKs)
+            return Image.open(buf)
+
+        except Exception as e:
+            self.logger.error(f"Error generating chart image: {e}")
             return None
