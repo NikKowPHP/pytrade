@@ -1,63 +1,46 @@
 import mplfinance as mpf
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from services.logger import Logger
 
 class ChartService:
     def __init__(self):
         self.logger = Logger()
-        # Use a dark theme for the charts to match your UI
-        # 'charles' is a standard candle style, we can customize colors further if needed
         self.style = mpf.make_mpf_style(base_mpf_style='charles', gridstyle='', facecolor='#2b2b2b', edgecolor='#404040')
-        self.canvas = None
 
-    def create_chart(self, parent_frame, df, ai_results=None):
+    def create_chart_figure(self, df, ai_results=None):
         """
-        Plots the candlestick chart and draws AI levels (Entry, SL, TP).
+        Creates the Matplotlib Figure for the candle chart.
         """
         try:
             if df is None or df.empty:
-                self.logger.warning("Empty dataframe provided to ChartService")
-                return
+                return None
 
-            self.logger.info("Generating candlestick chart")
-
-            # Clear any previous charts in the frame
-            for widget in parent_frame.winfo_children():
-                widget.destroy()
-
-            # We only want to plot the last 100 candles for visibility
             plot_df = df.tail(100)
-
-            # Prepare horizontal lines for AI levels
+            
+            # Logic to determine lines
             hlines_list = []
             colors = []
             
             if ai_results and ai_results.get("decision") != "WAIT":
-                # Ensure we handle strings or floats
                 try:
                     entry = ai_results.get("entry")
                     sl = ai_results.get("stop_loss")
                     tp = ai_results.get("take_profit")
 
-                    if entry and entry != "N/A": 
+                    # Helper to check validity
+                    def is_valid(val): return val and val != "N/A" and isinstance(val, (int, float))
+
+                    if is_valid(entry): 
                         hlines_list.append(float(entry))
-                        colors.append('blue') # Blue for Entry
-                    if sl and sl != "N/A": 
+                        colors.append('blue')
+                    if is_valid(sl): 
                         hlines_list.append(float(sl))
-                        colors.append('red')  # Red for Stop Loss
-                    if tp and tp != "N/A": 
+                        colors.append('red')
+                    if is_valid(tp): 
                         hlines_list.append(float(tp))
-                        colors.append('green') # Green for Take Profit
-                except (ValueError, TypeError) as e:
-                    self.logger.error(f"Error parsing AI levels for chart: {e}")
+                        colors.append('green')
+                except Exception:
+                    pass # Ignore parsing errors for lines
 
-            hlines_config = None
-            if hlines_list:
-                hlines_config = dict(hlines=hlines_list, colors=colors, linestyle='-.', linewidths=2)
-
-            # Create the figure
-            # FIX: Do not pass hlines=None directly. Construct kwargs dynamically.
             plot_kwargs = dict(
                 type='candle',
                 style=self.style,
@@ -69,20 +52,12 @@ class ChartService:
                 show_nontrading=False
             )
             
-            if hlines_config:
-                plot_kwargs['hlines'] = hlines_config
+            if hlines_list:
+                plot_kwargs['hlines'] = dict(hlines=hlines_list, colors=colors, linestyle='-.', linewidths=2)
 
             fig, axlist = mpf.plot(plot_df, **plot_kwargs)
-
-            # Embed into Tkinter
-            self.canvas = FigureCanvasTkAgg(fig, master=parent_frame)
-            self.canvas.draw()
-            self.canvas.get_tk_widget().pack(fill="both", expand=True)
-            
-            self.logger.info("Chart successfully embedded")
+            return fig
 
         except Exception as e:
-            self.logger.exception(f"Critical error in ChartService.create_chart: {e}")
-            import customtkinter as ctk
-            error_label = ctk.CTkLabel(parent_frame, text=f"Chart Error: {str(e)}")
-            error_label.pack(expand=True)
+            self.logger.error(f"Error creating chart figure: {e}")
+            return None
