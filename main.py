@@ -13,7 +13,7 @@ class ForexApp(ctk.CTk):
         self.logger.info("Initializing ForexApp")
 
         self.title("AI Forex Swing Assistant - Professional Edition")
-        self.geometry("1100x900") # Wider for chart
+        self.geometry("1200x900") # Increased width slightly for better layout
         
         try:
             # Initialize Services
@@ -22,86 +22,107 @@ class ForexApp(ctk.CTk):
             self.news_service = NewsService()
             self.chart_service = ChartService()
 
-            # Layout Configuration
+            # --- MAIN LAYOUT CONFIGURATION ---
             self.grid_columnconfigure(0, weight=1)
-            self.grid_columnconfigure(1, weight=3) # Chart column
-            self.grid_rowconfigure(5, weight=1)
+            self.grid_rowconfigure(1, weight=1) # Make row 1 (TabView) expand
 
-            # Header
+            # 1. Header (Top of Window)
             self.header_label = ctk.CTkLabel(self, text="AI Forex Professional Analysis", font=("Roboto", 24, "bold"))
-            self.header_label.grid(row=0, column=0, columnspan=2, padx=20, pady=20)
+            self.header_label.grid(row=0, column=0, pady=(10, 5), sticky="ew")
 
-            # Inputs Frame
-            self.input_frame = ctk.CTkFrame(self)
-            self.input_frame.grid(row=1, column=0, padx=20, pady=10, sticky="ew")
-            self.input_frame.grid_columnconfigure(1, weight=1)
+            # 2. TabView Container
+            self.tab_view = ctk.CTkTabview(self)
+            self.tab_view.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
+            self.tab_view.add("Dashboard")
+            
+            # --- DASHBOARD TAB LAYOUT ---
+            self.dashboard = self.tab_view.tab("Dashboard")
+            self.dashboard.grid_columnconfigure(0, weight=1) 
+            self.dashboard.grid_rowconfigure(1, weight=1) # Content area expands
 
-            # Symbol Input
-            self.symbol_label = ctk.CTkLabel(self.input_frame, text="Symbol:")
-            self.symbol_label.grid(row=0, column=0, padx=10, pady=10, sticky="w")
+            # 3. Top Tools Frame (Horizontal Bar)
+            self.tools_frame = ctk.CTkFrame(self.dashboard, fg_color="transparent")
+            self.tools_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+            
+            # Tools: Symbol
+            self.symbol_label = ctk.CTkLabel(self.tools_frame, text="Symbol:", font=("Roboto", 14, "bold"))
+            self.symbol_label.pack(side="left", padx=(10, 5))
             
             self.pairs = [
                 "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD",
                 "EURGBP", "EURJPY", "GBPJPY", "XAUUSD"
             ]
-            self.symbol_option = ctk.CTkOptionMenu(self.input_frame, values=self.pairs)
-            self.symbol_option.grid(row=0, column=1, padx=10, pady=10, sticky="ew")
+            self.symbol_option = ctk.CTkOptionMenu(self.tools_frame, values=self.pairs, width=120)
+            self.symbol_option.pack(side="left", padx=5)
             self.symbol_option.set("EURUSD")
 
-            # Timeframe Input
-            self.timeframe_label = ctk.CTkLabel(self.input_frame, text="Timeframe:")
-            self.timeframe_label.grid(row=1, column=0, padx=10, pady=10, sticky="w")
-            self.timeframe_option = ctk.CTkOptionMenu(self.input_frame, values=["1h", "4h", "1d"])
-            self.timeframe_option.grid(row=1, column=1, padx=10, pady=10, sticky="ew")
+            # Tools: Timeframe
+            self.timeframe_label = ctk.CTkLabel(self.tools_frame, text="Timeframe:", font=("Roboto", 14, "bold"))
+            self.timeframe_label.pack(side="left", padx=(20, 5))
+            
+            self.timeframe_option = ctk.CTkOptionMenu(self.tools_frame, values=["1h", "4h", "1d"], width=80)
+            self.timeframe_option.pack(side="left", padx=5)
             self.timeframe_option.set("1d")
 
-            # Provider Input
-            self.provider_label = ctk.CTkLabel(self.input_frame, text="AI Provider:")
-            self.provider_label.grid(row=3, column=0, padx=10, pady=10, sticky="w")
-            self.provider_option = ctk.CTkOptionMenu(self.input_frame, values=["Gemini", "Cerebras", "Groq", "OpenRouter"], command=self.update_models)
-            self.provider_option.grid(row=3, column=1, padx=10, pady=10, sticky="ew")
+            # Tools: Provider
+            self.provider_label = ctk.CTkLabel(self.tools_frame, text="AI Provider:", font=("Roboto", 14, "bold"))
+            self.provider_label.pack(side="left", padx=(20, 5))
+            
+            self.provider_option = ctk.CTkOptionMenu(self.tools_frame, values=["Gemini", "Cerebras", "Groq", "OpenRouter"], command=self.update_models, width=120)
+            self.provider_option.pack(side="left", padx=5)
             self.provider_option.set("Gemini")
 
-            # Model Selection
-            self.model_label = ctk.CTkLabel(self.input_frame, text="Model:")
-            self.model_label.grid(row=4, column=0, padx=10, pady=10, sticky="w")
-            self.model_option = ctk.CTkOptionMenu(self.input_frame, values=["gemini-2.0-flash-exp"])
-            self.model_option.grid(row=4, column=1, padx=10, pady=10, sticky="ew")
-
-            # News / Fundamentals Input
-            self.news_label = ctk.CTkLabel(self, text="Fundamental News / Context:", font=("Roboto", 16))
-            self.news_label.grid(row=2, column=0, padx=20, pady=(10, 0), sticky="w")
+            # Tools: Model
+            self.model_label = ctk.CTkLabel(self.tools_frame, text="Model:", font=("Roboto", 14, "bold"))
+            self.model_label.pack(side="left", padx=(20, 5))
             
-            self.news_textbox = ctk.CTkTextbox(self, height=80)
-            self.news_textbox.grid(row=3, column=0, padx=20, pady=10, sticky="ew")
+            self.model_option = ctk.CTkOptionMenu(self.tools_frame, values=["gemini-2.0-flash-exp"], width=200)
+            self.model_option.pack(side="left", padx=5)
+
+            # 4. Content Split (Left: Sidebar, Right: Chart)
+            self.content_split = ctk.CTkFrame(self.dashboard, fg_color="transparent")
+            self.content_split.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+            
+            self.content_split.grid_columnconfigure(0, weight=1) # Sidebar
+            self.content_split.grid_columnconfigure(1, weight=3) # Chart Area
+            self.content_split.grid_rowconfigure(0, weight=1)
+
+            # --- Left Sidebar (News Input & Results) ---
+            self.sidebar_frame = ctk.CTkFrame(self.content_split)
+            self.sidebar_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+            self.sidebar_frame.grid_columnconfigure(0, weight=1)
+            self.sidebar_frame.grid_rowconfigure(4, weight=1) # Result box expands
+
+            # News Input
+            self.news_label = ctk.CTkLabel(self.sidebar_frame, text="Fundamental Context:", font=("Roboto", 14, "bold"))
+            self.news_label.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="w")
+            
+            self.news_textbox = ctk.CTkTextbox(self.sidebar_frame, height=100)
+            self.news_textbox.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
 
             # Analyze Button
-            self.analyze_button = ctk.CTkButton(self, text="Analyze Market", command=self.start_analysis, font=("Roboto", 16, "bold"), height=40)
-            self.analyze_button.grid(row=4, column=0, padx=20, pady=20)
+            self.analyze_button = ctk.CTkButton(self.sidebar_frame, text="Analyze Market", command=self.start_analysis, font=("Roboto", 16, "bold"), height=40)
+            self.analyze_button.grid(row=2, column=0, padx=10, pady=15, sticky="ew")
 
-            # Output Area - Changed to Textbox for richer data
-            self.output_frame = ctk.CTkFrame(self)
-            self.output_frame.grid(row=5, column=0, padx=20, pady=20, sticky="nsew")
-            self.output_frame.grid_columnconfigure(0, weight=1)
-            self.output_frame.grid_rowconfigure(1, weight=1)
-            
-            self.result_title = ctk.CTkLabel(self.output_frame, text="Analysis Report", font=("Roboto", 18, "bold"))
-            self.result_title.grid(row=0, column=0, padx=10, pady=10, sticky="w")
+            # Output Area
+            self.result_title = ctk.CTkLabel(self.sidebar_frame, text="Analysis Report:", font=("Roboto", 14, "bold"))
+            self.result_title.grid(row=3, column=0, padx=10, pady=(5,0), sticky="nw")
 
-            # Using a Textbox instead of Label for scrollable, detailed results
-            self.result_box = ctk.CTkTextbox(self.output_frame, font=("Consolas", 14), wrap="word")
-            self.result_box.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
+            self.result_box = ctk.CTkTextbox(self.sidebar_frame, font=("Consolas", 13), wrap="word")
+            self.result_box.grid(row=4, column=0, padx=10, pady=(0, 10), sticky="nsew")
             self.result_box.insert("0.0", "Ready to analyze...")
             self.result_box.configure(state="disabled")
 
-            # Chart Frame (Column 1)
-            self.chart_frame = ctk.CTkFrame(self)
-            self.chart_frame.grid(row=1, column=1, rowspan=5, padx=20, pady=10, sticky="nsew")
+            # --- Right Chart Area ---
+            self.chart_frame = ctk.CTkFrame(self.content_split)
+            self.chart_frame.grid(row=0, column=1, sticky="nsew")
+            # Grid config for chart frame to allow canvas to expand
             self.chart_frame.grid_columnconfigure(0, weight=1)
             self.chart_frame.grid_rowconfigure(0, weight=1)
             
             self.chart_label = ctk.CTkLabel(self.chart_frame, text="Market Chart will appear here after analysis", font=("Roboto", 14))
             self.chart_label.grid(row=0, column=0)
+            
             self.last_df = None
             
             # CHANGE: Trigger initial data load on startup
