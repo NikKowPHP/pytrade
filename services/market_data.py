@@ -39,7 +39,7 @@ class MarketDataProvider:
                 self.logger.warning(f"No data found for symbol: {symbol}")
                 return None, "No data found for symbol."
             
-            self.logger.debug(f"Fetched {len(df)} rows for {symbol}")
+            self.logger.debug(f"Fetched {len(df)} rows for {symbol} {df}")
             return df, None
         except Exception as e:
             self.logger.error(f"Error fetching data for {symbol}: {str(e)}")
@@ -50,24 +50,31 @@ class MarketDataProvider:
         Calculates EMA 50, EMA 200, RSI 14, and ATR 14.
         """
         try:
-            self.logger.info("Calculating using pandas_ta")
-             # Ensure we have enough data
+            self.logger.info("Calculating technical indicators using pandas_ta")
+            
             if len(df) < 200:
                 self.logger.warning(f"Not enough data for 200 EMA. Got {len(df)} rows.")
-                print(f"Warning: Not enough data for 200 EMA. Got {len(df)} rows.")
 
-            # Calculate indicators using pandas_ta
-            # We copy to avoid SettingWithCopy warning if it's a slice
+            # Calculate indicators
             df = df.copy()
             df['EMA_50'] = ta.ema(df['Close'], length=50)
             df['EMA_200'] = ta.ema(df['Close'], length=200)
             df['RSI'] = ta.rsi(df['Close'], length=14)
             df['ATR'] = ta.atr(df['High'], df['Low'], df['Close'], length=14)
             
-            self.logger.debug("Indicators calculated successfully")
+            # LOGGING THE LATEST DATA FOR DEBUGGING
+            latest = df.iloc[-1]
+            self.logger.info(
+                f"LATEST TECHNICALS -> "
+                f"Close: {latest['Close']:.5f} | "
+                f"RSI: {latest['RSI']:.2f} | "
+                f"ATR: {latest['ATR']:.5f} | "
+                f"EMA200: {latest['EMA_200']:.5f}"
+            )
+            
             return df
         except Exception as e:
             self.logger.error(f"Error calculating indicators: {e}")
-            print(f"Error calculating indicators: {e}")
             return df
+
 

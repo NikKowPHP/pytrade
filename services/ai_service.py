@@ -20,8 +20,7 @@ class AITrader:
                 self.gemini_client = genai.Client(api_key=self.gemini_api_key)
             else:
                 self.gemini_client = None
-                self.logger.error("GEMINI_API_KEY is missing in configuration.")
-            self.gemini_model_id = "gemini-3-flash-preview"
+            self.gemini_model_id = "gemini-2.0-flash"
         except Exception as e:
             self.logger.error(f"Error initializing Gemini Client: {e}")
             self.gemini_client = None
@@ -33,10 +32,7 @@ class AITrader:
                 self.cerebras_client = Cerebras(api_key=self.cerebras_api_key)
             else:
                 self.cerebras_client = None
-                self.logger.warning("CEREBRAS_API_KEY is missing in configuration.")
-            self.cerebras_model_id = "zai-glm-4.7" # "qwen-3-235b-a22b-instruct-2507" - using a solid default, user example had qwen but llama is often standard, let's stick to user example mock if possible, or general. User example: "qwen-3-235b-a22b-instruct-2507"
-            
-
+            self.cerebras_model_id = "llama3.1-70b"
         except Exception as e:
             self.logger.error(f"Error initializing Cerebras Client: {e}")
             self.cerebras_client = None
@@ -48,9 +44,7 @@ class AITrader:
                 self.groq_client = Groq(api_key=self.groq_api_key)
             else:
                 self.groq_client = None
-                self.logger.warning("GROQ_API_KEY is missing in configuration.")
-            self.groq_model_id = "moonshotai/kimi-k2-instruct-0905"
-
+            self.groq_model_id = "llama-3.1-70b-versatile"
         except Exception as e:
             self.logger.error(f"Error initializing Groq Client: {e}")
             self.groq_client = None
@@ -65,11 +59,7 @@ class AITrader:
                 )
             else:
                 self.openrouter_client = None
-                self.logger.warning("OPENROUTER_API_KEY is missing in configuration.")
-            
-            # Default models
             self.openrouter_model_id = "stepfun/step-3.5-flash:free"
-
         except Exception as e:
             self.logger.error(f"Error initializing OpenRouter Client: {e}")
             self.openrouter_client = None
@@ -77,12 +67,12 @@ class AITrader:
 
     def generate_prompt(self, df, news, symbol):
         """
-        Constructs the prompt.
+        Constructs the prompt and returns the prompt string AND the technical details dict.
         """
         try:
             if df is None or df.empty:
                 self.logger.error("Dataframe is empty or None in generate_prompt")
-                return "Error: No data available for analysis."
+                return "Error: No data available for analysis.", {}
 
             # Get latest values
             latest = df.iloc[-1]
@@ -100,6 +90,16 @@ class AITrader:
             atr = f"{latest['ATR']:.4f}" if pd.notna(latest['ATR']) else "N/A"
             price = f"{latest['Close']:.5f}"
             
+            # Create a dictionary for the UI to display exactly what the AI saw
+            technical_details = {
+                "symbol": symbol,
+                "price": price,
+                "trend": trend,
+                "rsi": rsi,
+                "atr": atr,
+                "ema_200": f"{latest['EMA_200']:.5f}" if pd.notna(latest['EMA_200']) else "N/A"
+            }
+
             prompt = f"""
 You are a professional Forex trader using a Swing Trading strategy.
 
@@ -114,81 +114,72 @@ You are a professional Forex trader using a Swing Trading strategy.
 
 **Task:**
 Analyze the provided technical and fundamental data.
-1. Determine the trade decision: BUY, SELL, or WAIT.
-2. If acting (BUY/SELL):
-    - Set Entry Price (use current price or a close pending order).
-    - Set Stop Loss (SL) based on the ATR (e.g., 1.5x ATR).
+1. Analyze the correlation between the Technicals and Fundamentals.
+2. Determine the trade decision: BUY, SELL, or WAIT.
+3. If acting (BUY/SELL):
+    - Set Entry Price.
+    - Set Stop Loss (SL) based on the ATR (approx 1.5x - 2x ATR).
     - Set Take Profit (TP) aiming for at least a 1:2 Risk-Reward Ratio.
-    - Provide a reasoning summary.
 
 **Output Format:**
 Return ONLY a valid JSON object with the following keys:
 {{
   "decision": "BUY" | "SELL" | "WAIT",
+  "confidence_score": "0-100",
   "entry": float or null,
   "stop_loss": float or null,
   "take_profit": float or null,
-  "reasoning": "string"
+  "technical_analysis": "Brief summary of technical factors",
+  "fundamental_analysis": "Brief summary of news impact",
+  "reasoning": "Final combined conclusion"
 }}
 """
-            return prompt
+            # LOG THE PROMPT
+            self.logger.debug(f"--- GENERATED PROMPT FOR {symbol} ---\n{prompt}\n-----------------------------------")
+            
+            return prompt, technical_details
+            
         except Exception as e:
             self.logger.error(f"Error generating prompt: {e}")
-            return f"Error generating prompt: {e}"
+            return f"Error generating prompt: {e}", {}
 
     def analyze(self, prompt, provider="gemini", model=None):
         """
         Routes analysis to the selected provider.
         """
         self.logger.info(f"Analyzing with provider: {provider}, model: {model}")
+        
+        response_data = {}
+        
         if provider.lower() == "cerebras":
-            return self._analyze_cerebras(prompt, model)
+            response_data = self._analyze_cerebras(prompt, model)
         elif provider.lower() == "groq":
-            return self._analyze_groq(prompt, model)
+            response_data = self._analyze_groq(prompt, model)
         elif provider.lower() == "openrouter":
-            return self._analyze_openrouter(prompt, model)
+            response_data = self._analyze_openrouter(prompt, model)
         else:
-            return self._analyze_gemini(prompt, model)
+            response_data = self._analyze_gemini(prompt, model)
+            
+        return response_data
 
     def _analyze_gemini(self, prompt, model=None):
         try:
             self.logger.info("Starting Gemini analysis request")
             if not self.gemini_client:
-                self.logger.error("Gemini Client not initialized.")
                 return {"error": "Gemini API Key missing"}
             
             model_id = model if model else self.gemini_model_id
             
-            contents = [
-                types.Content(
-                    role="user",
-                    parts=[
-                        types.Part.from_text(text=prompt),
-                    ],
-                ),
-            ]
-            
-            tools = [
-                types.Tool(google_search=types.GoogleSearch()),
-            ]
-            
-            generate_content_config = types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(
-                    thinking_level="HIGH",
-                ),
-                tools=tools,
-            )
-
-            response_text = ""
-            for chunk in self.gemini_client.models.generate_content_stream(
+            # Using generate_content for simplicity as streaming isn't strictly needed for this logic
+            response = self.gemini_client.models.generate_content(
                 model=model_id,
-                contents=contents,
-                config=generate_content_config,
-            ):
-                if chunk.text:
-                    response_text += chunk.text
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json" # Enforce JSON
+                )
+            )
             
-            return self._parse_json_response(response_text)
+            return self._parse_json_response(response.text)
 
         except Exception as e:
             self.logger.exception(f"Exception during Gemini analysis: {e}")
@@ -198,32 +189,17 @@ Return ONLY a valid JSON object with the following keys:
         try:
             self.logger.info("Starting Cerebras analysis request")
             if not self.cerebras_client:
-                self.logger.error("Cerebras Client not initialized.")
                 return {"error": "Cerebras API Key missing"}
 
             model_id = model if model else self.cerebras_model_id
 
-            stream = self.cerebras_client.chat.completions.create(
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
+            completion = self.cerebras_client.chat.completions.create(
+                messages=[{"role": "user", "content": prompt}],
                 model=model_id,
-                stream=True,
-                max_completion_tokens=20000,
-                temperature=0.7,
-                top_p=0.8
+                response_format={"type": "json_object"} 
             )
 
-            response_text = ""
-            for chunk in stream:
-                 content = chunk.choices[0].delta.content
-                 if content:
-                     response_text += content
-
-            return self._parse_json_response(response_text)
+            return self._parse_json_response(completion.choices[0].message.content)
 
         except Exception as e:
              self.logger.exception(f"Exception during Cerebras analysis: {e}")
@@ -233,33 +209,17 @@ Return ONLY a valid JSON object with the following keys:
         try:
             self.logger.info("Starting Groq analysis request")
             if not self.groq_client:
-                self.logger.error("Groq Client not initialized.")
                 return {"error": "Groq API Key missing"}
 
             model_id = model if model else self.groq_model_id
 
             completion = self.groq_client.chat.completions.create(
                 model=model_id,
-                messages=[
-                  {
-                    "role": "user",
-                    "content": prompt
-                  }
-                ],
-                temperature=0.6,
-                max_completion_tokens=4096,
-                top_p=1,
-                stream=True,
-                stop=None
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"}
             )
 
-            response_text = ""
-            for chunk in completion:
-                content = chunk.choices[0].delta.content
-                if content:
-                    response_text += content
-
-            return self._parse_json_response(response_text)
+            return self._parse_json_response(completion.choices[0].message.content)
 
         except Exception as e:
              self.logger.exception(f"Exception during Groq analysis: {e}")
@@ -269,45 +229,28 @@ Return ONLY a valid JSON object with the following keys:
         try:
             self.logger.info("Starting OpenRouter analysis request")
             if not self.openrouter_client:
-                self.logger.error("OpenRouter Client not initialized.")
                 return {"error": "OpenRouter API Key missing"}
 
             model_id = model if model else self.openrouter_model_id
             
-            self.logger.info(f"Using OpenRouter model: {model_id}")
-
             completion = self.openrouter_client.chat.completions.create(
                 model=model_id,
-                messages=[
-                  {
-                    "role": "user",
-                    "content": prompt
-                  }
-                ],
-                # temperature=0.7, # Let model decide or use default
-                # max_tokens=4096,
+                messages=[{"role": "user", "content": prompt}],
             )
             
-            # OpenAI client (OpenRouter) returns an object, not a stream by default unless requested.
-            # Using non-streaming for simplicity first, or streaming if preferred.
-            # User request didn't specify streaming for OpenRouter, but other providers use streaming.
-            # For consistency, I'll use non-streaming or handle streaming if I use stream=True.
-            # Let's use validation simple first.
-            
-            response_text = completion.choices[0].message.content
-
-            return self._parse_json_response(response_text)
+            return self._parse_json_response(completion.choices[0].message.content)
 
         except Exception as e:
              self.logger.exception(f"Exception during OpenRouter analysis: {e}")
              return {"error": str(e)}
 
     def _parse_json_response(self, text):
-        # Cleanup markdown code blocks if present
+        # Log the RAW response for debugging purposes
+        self.logger.info(f"RAW AI RESPONSE RECEIVED:\n{text}")
+
         clean_text = text.replace("```json", "").replace("```", "").strip()
         
         if not clean_text:
-                self.logger.error("Empty response from AI")
                 return {"error": "Empty response from AI"}
 
         try:
@@ -320,6 +263,7 @@ Return ONLY a valid JSON object with the following keys:
             if match:
                 return json.loads(match.group(0))
             else:
-                    self.logger.error(f"Invalid JSON response: {clean_text[:100]}...")
-                    return {"error": f"Invalid JSON response: {clean_text[:100]}..."}
+                self.logger.error(f"Invalid JSON response: {clean_text[:100]}...")
+                return {"error": f"Invalid JSON response. See logs for raw output."}
+
 
