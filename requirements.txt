@@ -7,3 +7,4 @@ python-dotenv
 packaging
 cerebras_cloud_sdk
 groq
+openai

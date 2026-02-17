@@ -4,9 +4,10 @@ from cerebras.cloud.sdk import Cerebras
 import json
 import pandas as pd
 import os
-from config import GEMINI_API_KEY, CEREBRAS_API_KEY, GROQ_API_KEY
+from config import GEMINI_API_KEY, CEREBRAS_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY
 from services.logger import Logger
 from groq import Groq
+from openai import OpenAI
 
 class AITrader:
     def __init__(self):
@@ -53,6 +54,25 @@ class AITrader:
         except Exception as e:
             self.logger.error(f"Error initializing Groq Client: {e}")
             self.groq_client = None
+
+        # Initialize OpenRouter
+        try:
+            self.openrouter_api_key = OPENROUTER_API_KEY
+            if self.openrouter_api_key:
+                self.openrouter_client = OpenAI(
+                    base_url="https://openrouter.ai/api/v1",
+                    api_key=self.openrouter_api_key,
+                )
+            else:
+                self.openrouter_client = None
+                self.logger.warning("OPENROUTER_API_KEY is missing in configuration.")
+            
+            # Default models
+            self.openrouter_model_id = "stepfun/step-3.5-flash:free"
+
+        except Exception as e:
+            self.logger.error(f"Error initializing OpenRouter Client: {e}")
+            self.openrouter_client = None
 
 
     def generate_prompt(self, df, news, symbol):
@@ -116,24 +136,28 @@ Return ONLY a valid JSON object with the following keys:
             self.logger.error(f"Error generating prompt: {e}")
             return f"Error generating prompt: {e}"
 
-    def analyze(self, prompt, provider="gemini"):
+    def analyze(self, prompt, provider="gemini", model=None):
         """
         Routes analysis to the selected provider.
         """
-        self.logger.info(f"Analyzing with provider: {provider}")
+        self.logger.info(f"Analyzing with provider: {provider}, model: {model}")
         if provider.lower() == "cerebras":
-            return self._analyze_cerebras(prompt)
+            return self._analyze_cerebras(prompt, model)
         elif provider.lower() == "groq":
-            return self._analyze_groq(prompt)
+            return self._analyze_groq(prompt, model)
+        elif provider.lower() == "openrouter":
+            return self._analyze_openrouter(prompt, model)
         else:
-            return self._analyze_gemini(prompt)
+            return self._analyze_gemini(prompt, model)
 
-    def _analyze_gemini(self, prompt):
+    def _analyze_gemini(self, prompt, model=None):
         try:
             self.logger.info("Starting Gemini analysis request")
             if not self.gemini_client:
                 self.logger.error("Gemini Client not initialized.")
                 return {"error": "Gemini API Key missing"}
+            
+            model_id = model if model else self.gemini_model_id
             
             contents = [
                 types.Content(
@@ -157,7 +181,7 @@ Return ONLY a valid JSON object with the following keys:
 
             response_text = ""
             for chunk in self.gemini_client.models.generate_content_stream(
-                model=self.gemini_model_id,
+                model=model_id,
                 contents=contents,
                 config=generate_content_config,
             ):
@@ -170,12 +194,14 @@ Return ONLY a valid JSON object with the following keys:
             self.logger.exception(f"Exception during Gemini analysis: {e}")
             return {"error": str(e)}
 
-    def _analyze_cerebras(self, prompt):
+    def _analyze_cerebras(self, prompt, model=None):
         try:
             self.logger.info("Starting Cerebras analysis request")
             if not self.cerebras_client:
                 self.logger.error("Cerebras Client not initialized.")
                 return {"error": "Cerebras API Key missing"}
+
+            model_id = model if model else self.cerebras_model_id
 
             stream = self.cerebras_client.chat.completions.create(
                 messages=[
@@ -184,7 +210,7 @@ Return ONLY a valid JSON object with the following keys:
                         "content": prompt
                     }
                 ],
-                model=self.cerebras_model_id,
+                model=model_id,
                 stream=True,
                 max_completion_tokens=20000,
                 temperature=0.7,
@@ -203,15 +229,17 @@ Return ONLY a valid JSON object with the following keys:
              self.logger.exception(f"Exception during Cerebras analysis: {e}")
              return {"error": str(e)}
 
-    def _analyze_groq(self, prompt):
+    def _analyze_groq(self, prompt, model=None):
         try:
             self.logger.info("Starting Groq analysis request")
             if not self.groq_client:
                 self.logger.error("Groq Client not initialized.")
                 return {"error": "Groq API Key missing"}
 
+            model_id = model if model else self.groq_model_id
+
             completion = self.groq_client.chat.completions.create(
-                model=self.groq_model_id,
+                model=model_id,
                 messages=[
                   {
                     "role": "user",
@@ -235,6 +263,43 @@ Return ONLY a valid JSON object with the following keys:
 
         except Exception as e:
              self.logger.exception(f"Exception during Groq analysis: {e}")
+             return {"error": str(e)}
+
+    def _analyze_openrouter(self, prompt, model=None):
+        try:
+            self.logger.info("Starting OpenRouter analysis request")
+            if not self.openrouter_client:
+                self.logger.error("OpenRouter Client not initialized.")
+                return {"error": "OpenRouter API Key missing"}
+
+            model_id = model if model else self.openrouter_model_id
+            
+            self.logger.info(f"Using OpenRouter model: {model_id}")
+
+            completion = self.openrouter_client.chat.completions.create(
+                model=model_id,
+                messages=[
+                  {
+                    "role": "user",
+                    "content": prompt
+                  }
+                ],
+                # temperature=0.7, # Let model decide or use default
+                # max_tokens=4096,
+            )
+            
+            # OpenAI client (OpenRouter) returns an object, not a stream by default unless requested.
+            # Using non-streaming for simplicity first, or streaming if preferred.
+            # User request didn't specify streaming for OpenRouter, but other providers use streaming.
+            # For consistency, I'll use non-streaming or handle streaming if I use stream=True.
+            # Let's use validation simple first.
+            
+            response_text = completion.choices[0].message.content
+
+            return self._parse_json_response(response_text)
+
+        except Exception as e:
+             self.logger.exception(f"Exception during OpenRouter analysis: {e}")
              return {"error": str(e)}
 
     def _parse_json_response(self, text):

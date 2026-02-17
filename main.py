@@ -61,9 +61,16 @@ class ForexApp(ctk.CTk):
             # Provider Input
             self.provider_label = ctk.CTkLabel(self.input_frame, text="AI Provider:")
             self.provider_label.grid(row=3, column=0, padx=10, pady=10, sticky="w")
-            self.provider_option = ctk.CTkOptionMenu(self.input_frame, values=["Gemini", "Cerebras", "Groq"])
+            self.provider_option = ctk.CTkOptionMenu(self.input_frame, values=["Gemini", "Cerebras", "Groq", "OpenRouter"], command=self.update_models)
             self.provider_option.grid(row=3, column=1, padx=10, pady=10, sticky="ew")
             self.provider_option.set("Gemini")
+
+            # Model Selection
+            self.model_label = ctk.CTkLabel(self.input_frame, text="Model:")
+            self.model_label.grid(row=4, column=0, padx=10, pady=10, sticky="w")
+            self.model_option = ctk.CTkOptionMenu(self.input_frame, values=["gemini-2.0-flash-exp"])
+            self.model_option.grid(row=4, column=1, padx=10, pady=10, sticky="ew")
+
 
             # News / Fundamentals Input
             self.news_label = ctk.CTkLabel(self, text="Fundamental News / Context:", font=("Roboto", 16))
@@ -97,7 +104,25 @@ class ForexApp(ctk.CTk):
             threading.Thread(target=self.run_analysis, daemon=True).start()
         except Exception as e:
              self.logger.exception(f"Error starting analysis: {e}")
+        except Exception as e:
+             self.logger.exception(f"Error starting analysis: {e}")
              self.update_ui_error(f"Error starting analysis: {e}")
+
+    def update_models(self, provider):
+        models = []
+        if provider == "Gemini":
+            models = ["gemini-2.0-flash-exp", "gemini-1.5-flash"]
+        elif provider == "Cerebras":
+            models = ["llama3.1-70b", "llama3.1-8b"]
+        elif provider == "Groq":
+            models = ["llama-3.1-70b-versatile", "mixtral-8x7b-32768"]
+        elif provider == "OpenRouter":
+            models = ["stepfun/step-3.5-flash:free", "google/gemini-2.0-flash-lite-preview-02-05:free", "meta-llama/llama-3.3-70b-instruct:free"]
+        
+        self.model_option.configure(values=models)
+        if models:
+            self.model_option.set(models[0])
+
 
     def run_analysis(self):
         try:
@@ -125,7 +150,8 @@ class ForexApp(ctk.CTk):
             
             # 4. Call AI (Gemini or Cerebras)
             provider = self.provider_option.get()
-            response = self.ai_trader.analyze(prompt, provider=provider)
+            model = self.model_option.get()
+            response = self.ai_trader.analyze(prompt, provider=provider, model=model)
             
             if "error" in response:
                 self.after(0, lambda: self.update_ui_error(f"AI Error: {response['error']}"))
