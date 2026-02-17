@@ -62,14 +62,12 @@ class MarketDataProvider:
                 new_df = pd.DataFrame()
                 if start_date:
                     # Fetch update
-                    # Note: yf.download with 'start' expects a date or datetime string/object
                     new_df = yf.download(
                         tickers=ticker_symbol, 
                         start=start_date, 
                         interval=native_interval, 
                         progress=False,
-                        auto_adjust=False,
-                        multi_level_index=False # Try to force simple index if supported by version
+                        auto_adjust=False
                     )
                 else:
                     # Fetch full history
@@ -78,8 +76,7 @@ class MarketDataProvider:
                         period=fetch_period, 
                         interval=native_interval, 
                         progress=False,
-                        auto_adjust=False,
-                        multi_level_index=False
+                        auto_adjust=False
                     )
                 
                 # Handle MultiIndex manually if the parameter didn't work (common in some versions)

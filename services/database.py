@@ -27,12 +27,67 @@ class Database:
                     PRIMARY KEY (symbol, interval, timestamp)
                 )
             ''')
+            # NEW: Trade Journal Table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS trade_journal (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    symbol TEXT,
+                    timeframe TEXT,
+                    provider TEXT,
+                    decision TEXT,
+                    entry REAL,
+                    stop_loss REAL,
+                    take_profit REAL,
+                    confidence INTEGER,
+                    reasoning TEXT
+                )
+            ''')
             conn.commit()
             conn.close()
         except Exception as e:
             self.logger.error(f"Database initialization error: {e}")
 
+    def save_analysis(self, data):
+        """Saves an AI analysis result to the journal."""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO trade_journal 
+                (symbol, timeframe, provider, decision, entry, stop_loss, take_profit, confidence, reasoning)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                data['symbol'], data['timeframe'], data['provider'], 
+                data['decision'], data['entry'], data['stop_loss'], data['take_profit'], 
+                data['confidence'], data['reasoning']
+            ))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            self.logger.error(f"Error saving analysis: {e}")
+            return False
+
+    def get_journal_entries(self):
+        """Retrieves last 50 journal entries."""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, timestamp, symbol, decision, confidence, entry, stop_loss, take_profit 
+                FROM trade_journal 
+                ORDER BY timestamp DESC LIMIT 50
+            ''')
+            rows = cursor.fetchall()
+            conn.close()
+            return rows
+        except Exception as e:
+            self.logger.error(f"Error fetching journal: {e}")
+            return []
+
     def get_last_timestamp(self, symbol, interval):
+
         """Returns the latest timestamp stored for a given symbol and interval."""
         try:
             conn = sqlite3.connect(self.db_name)
