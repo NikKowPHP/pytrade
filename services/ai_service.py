@@ -306,6 +306,32 @@ You are an expert Forex Swing Trader. Analyze the attached chart image and the d
         """
         return self.analyze(prompt, image=image, provider=provider, model=model)
 
+    def analyze_sentiment(self, headlines, symbol, provider, model):
+        """
+        Calculates a weighted sentiment score (-1 to 1) for a list of headlines.
+        """
+        if not headlines:
+            return {"score": 0, "reasoning": "No news data"}
+
+        prompt = f"""
+        AGENT: Sentiment Quant
+        TARGET: {symbol}
+        HEADLINES:
+        {json.dumps(headlines)}
+
+        TASK: 
+        1. Read the headlines.
+        2. Assign a sentiment score from -1.0 (Very Bearish) to 1.0 (Very Bullish) for {symbol}.
+        3. Weight recent or major source headlines higher.
+
+        OUTPUT JSON:
+        {{
+            "score": float,  // e.g. -0.65
+            "reasoning": "Brief explanation (e.g. 'Rate hike fears dominate')"
+        }}
+        """
+        return self.analyze(prompt, provider=provider, model=model)
+
     def analyze_fundamental(self, news, calendar, provider, model):
         prompt = f"""
         AGENT: Fundamental Macro Analyst
@@ -315,24 +341,57 @@ You are an expert Forex Swing Trader. Analyze the attached chart image and the d
         """
         return self.analyze(prompt, provider=provider, model=model)
 
+    # NEW METHOD: The Devil's Advocate
+    def analyze_risk(self, tech_data, pivots, news, provider, model):
+        prompt = f"""
+        AGENT: The Devil's Advocate (Risk Manager)
+        ROLE: You are a skeptical bear. Your job is to find reasons NOT to trade.
+        
+        DATA:
+        - Techs: {tech_data}
+        - Levels: {pivots}
+        - News: {news}
+        
+        TASK: 
+        Ignore the potential upside. Focus purely on risks.
+        1. Why might a BUY fail here? (e.g. Resistance ahead, overbought, bearish divergence).
+        2. Why might a SELL fail here? (e.g. Support below, oversold, bullish divergence).
+        3. Identify any "Traps" (False breakouts, liquidity grabs).
+        
+        OUTPUT: A harsh, bulleted list of dangers.
+        """
+        return self.analyze(prompt, provider=provider, model=model)
+
     def analyze_master(self, council_reports, tech_details, provider, model, macro_context=""):
         prompt = f"""
         MASTER AGENT: Trading Desk Head
         
         **1. GLOBAL MACRO REGIME**
         {macro_context}
-        *Guidance:* 
-        - If VIX is spiking (>5%) or SPX crashing, we are in RISK-OFF. Avoid buying risky pairs (AUD, NZD, GBP). Look for USD/JPY/CHF safety.
-        - If SPX is rallying and VIX dropping, we are in RISK-ON.
+        
+        **2. MARKET DATA, SMC & CORRELATIONS**
+        {tech_details}
+        *CRITICAL INSTRUCTION:* Pay close attention to the 'smart_money_concepts' and 'correlations' sections.
+        - "Fair Value Gaps" (FVG) act as magnets. If price is near an FVG, it often fills it before reversing.
+        - "Order Blocks" are high-probability reversal zones.
+        - Prioritize these institutional levels over standard RSI/MACD signals.
+        
+        *INSTRUCTION ON CORRELATION:*
+        - Look at the 'correlations' field.
+        - If 'Status' shows DIVERGENCE or FAKE-OUT, the current move is likely a trap. 
+        - Example: If EURUSD is up, but DXY (Dollar) is also up (Correlation -0.9), this is a fakeout. REJECT the trade.
 
-        **2. COUNCIL REPORTS**
+        **3. THE COUNCIL REPORTS (Proponents)**
         {council_reports}
 
-        **3. MARKET SNAPSHOT**
-        {tech_details}
-
-        TASK: Synthesize the Council's reports WITH the Global Macro Context. 
-        If the technicals are good but the Macro Regime opposes the trade (e.g. Buying AUDJPY in a crash), REJECT the trade or reduce confidence significantly.
+        **TASK:** 
+        Synthesize everything.
+        1. Does the Macro Regime support the trade?
+        2. Do the SMC levels (Order Blocks) align with the setup?
+        3. Is the move confirmed by the Inter-market Correlation?
+        4. Compare the Council's analysis against the "DEVIL'S ADVOCATE" (Risk Report) inside the council reports.
+        - If the Council says BUY, but the Devil's Advocate points out a major resistance level or news risk, DELETE the trade or lower confidence.
+        - Do not let confirmation bias win. If the risks outweigh the setup, output WAIT.
 
         OUTPUT FORMAT: Return ONLY valid JSON:
         {{
@@ -341,9 +400,9 @@ You are an expert Forex Swing Trader. Analyze the attached chart image and the d
           "entry": float,
           "stop_loss": float,
           "take_profit": float,
-          "technical_analysis": "Summary of Quant & Vision",
-          "fundamental_analysis": "Macro Regime + News",
-          "reasoning": "Final synthesis including Macro impact"
+          "technical_analysis": "Synthesis of Quant & Vision",
+          "risk_analysis": "Key concerns from the Devil's Advocate",
+          "reasoning": "Final verdict balancing greed vs fear"
         }}
         """
         return self.analyze(prompt, provider=provider, model=model)

@@ -15,20 +15,18 @@ class NewsService:
     def fetch_news(self, symbol):
         """
         Fetches news for a given symbol.
-        Tries NewsAPI first, falls back to Yahoo Finance.
-        Returns a formatted string summary of the news.
+        Returns: (formatted_text, raw_headlines_list)
         """
         news_text = "RECENT NEWS:\n"
+        raw_headlines = []
         has_news = False
         
         # 1. Try NewsAPI if key is present
         if self.news_api_key:
             try:
                 self.logger.info(f"Fetching news from NewsAPI for {symbol}")
-                # Heuristic for Forex pairs to get relevant news
                 query = symbol
                 if len(symbol) == 6 and symbol.isalpha():
-                     # e.g. "EURUSD" OR "EUR USD" OR "forex"
                      query = f"{symbol} OR {symbol[:3]} AND {symbol[3:]} forex"
                 
                 url = f"https://newsapi.org/v2/everything?q={query}&sortBy=publishedAt&language=en&apiKey={self.news_api_key}"
@@ -36,52 +34,44 @@ class NewsService:
                 data = response.json()
                 
                 if data.get("status") == "ok":
-                    articles = data.get("articles", [])[:5] # Top 5
+                    articles = data.get("articles", [])[:10]
                     if articles:
                         for article in articles:
                             title = article.get("title")
-                            description = article.get("description")
                             source = article.get("source", {}).get("name")
+                            raw_headlines.append(f"{source}: {title}")
                             pub_date = article.get("publishedAt", "")[:10]
-                            news_text += f"- [{pub_date}] ({source}) {title}: {description}\n"
+                            news_text += f"- [{pub_date}] ({source}) {title}\n"
                         has_news = True
-                        return news_text # Return immediately if success
-                    else:
-                        self.logger.info("No articles found on NewsAPI.")
-                else:
-                    self.logger.warning(f"NewsAPI error: {data.get('message')}")
-
             except Exception as e:
                 self.logger.error(f"Error fetching from NewsAPI: {e}")
 
         # 2. Fallback to Yahoo Finance
-        try:
-            self.logger.info(f"Fetching news from Yahoo Finance for {symbol}")
-            ticker_symbol = symbol
-            if not symbol.endswith('=X') and len(symbol) == 6:
-                ticker_symbol = f"{symbol}=X"
-            
-            ticker = yf.Ticker(ticker_symbol)
-            news_items = ticker.news
-            
-            if news_items:
-                for item in news_items[:5]:
-                    content = item.get("content", {})
-                    title = content.get("title")
-                    summary = content.get("summary")
-                    pub_date = content.get("pubDate", "")[:10] # simple date slice
-                    news_text += f"- [{pub_date}] (Yahoo) {title}: {summary}\n"
-                has_news = True
-            else:
-                self.logger.info("No recent news found on Yahoo Finance.")
+        if not has_news or len(raw_headlines) < 3:
+            try:
+                self.logger.info(f"Fetching news from Yahoo Finance for {symbol}")
+                ticker_symbol = symbol
+                if not symbol.endswith('=X') and len(symbol) == 6:
+                    ticker_symbol = f"{symbol}=X"
                 
-        except Exception as e:
-            self.logger.error(f"Error fetching from Yahoo Finance: {e}")
+                ticker = yf.Ticker(ticker_symbol)
+                news_items = ticker.news
+                
+                if news_items:
+                    for item in news_items[:5]:
+                        content = item.get("content", {})
+                        title = content.get("title")
+                        raw_headlines.append(f"Yahoo: {title}")
+                        pub_date = content.get("pubDate", "")[:10]
+                        news_text += f"- [{pub_date}] (Yahoo) {title}\n"
+                    has_news = True
+            except Exception as e:
+                self.logger.error(f"Error fetching from Yahoo Finance: {e}")
 
         if not has_news:
              news_text += "No recent news found.\n"
 
-        return news_text
+        return news_text, raw_headlines
 
     def fetch_economic_calendar(self, symbol=None):
         """

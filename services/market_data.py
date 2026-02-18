@@ -203,3 +203,170 @@ class MarketDataProvider:
         except Exception as e:
             self.logger.error(f"Error calculating pivots: {e}")
             return {}
+    def calculate_smart_money(self, df):
+        """
+        Detects Institutional Footprints: Fair Value Gaps (FVG) and Order Blocks (OB).
+        Returns a text summary and a list of levels for the AI.
+        """
+        try:
+            if df is None or len(df) < 5:
+                return "Not enough data for SMC.", []
+
+            smc_text = "INSTITUTIONAL LEVELS (Smart Money):\n"
+            levels = []
+            
+            # 1. Fair Value Gaps (FVG)
+            # Look at the last 50 candles to find active gaps
+            # Bullish FVG: High[i-1] < Low[i+1] (Gap in the middle of a big green candle)
+            # Bearish FVG: Low[i-1] > High[i+1] (Gap in the middle of a big red candle)
+            
+            lookback = 50
+            subset = df.iloc[-lookback:].reset_index()
+            
+            # Iterate (skip last candle as it's forming, start from 3rd candle)
+            for i in range(len(subset) - 2, 1, -1):
+                curr = subset.iloc[i]
+                prev = subset.iloc[i-1]
+                next_c = subset.iloc[i+1]
+                
+                # Check Bullish FVG
+                if curr['Close'] > curr['Open']: # Green Candle
+                    if next_c['Low'] > prev['High']:
+                        gap_size = next_c['Low'] - prev['High']
+                        # Filter small gaps (must be significant)
+                        if gap_size > (curr['Close'] * 0.0005): 
+                            # Check if price has since filled it (Mitigation test)
+                            # Simple check: has recent price crossed this level?
+                            latest_close = df.iloc[-1]['Close']
+                            
+                            # If price is currently below the bullish FVG, it's resistance or invalid
+                            # If price is above, it's support (magnet)
+                            if latest_close > next_c['Low']:
+                                smc_text += f"- BULLISH FVG detected at {prev['High']:.4f} - {next_c['Low']:.4f} (Support Magnet)\n"
+                                levels.append(f"Bullish FVG Zone: {prev['High']:.5f}")
+                
+                # Check Bearish FVG
+                elif curr['Close'] < curr['Open']: # Red Candle
+                    if next_c['High'] < prev['Low']:
+                        gap_size = prev['Low'] - next_c['High']
+                        if gap_size > (curr['Close'] * 0.0005):
+                            latest_close = df.iloc[-1]['Close']
+                            if latest_close < next_c['High']:
+                                smc_text += f"- BEARISH FVG detected at {next_c['High']:.4f} - {prev['Low']:.4f} (Resistance Magnet)\n"
+                                levels.append(f"Bearish FVG Zone: {prev['Low']:.5f}")
+
+            # 2. Order Blocks (Simplified)
+            # Detect the last opposing candle before a significant move (ATR * 3)
+            # This is a heuristic approximation.
+            last_30 = df.iloc[-30:]
+            highest = last_30['High'].max()
+            lowest = last_30['Low'].min()
+            current_price = df.iloc[-1]['Close']
+            
+            # If we are near lows, look for Bullish OB (Last Red Candle)
+            if (current_price - lowest) < (highest - lowest) * 0.3:
+                smc_text += f"- Watching for Bullish Order Block near {lowest:.4f} (Swing Low)\n"
+            
+            # If we are near highs, look for Bearish OB (Last Green Candle)
+            elif (highest - current_price) < (highest - lowest) * 0.3:
+                smc_text += f"- Watching for Bearish Order Block near {highest:.4f} (Swing High)\n"
+
+            if not levels:
+                smc_text += "No significant recent FVGs found.\n"
+
+            return smc_text, levels
+
+        except Exception as e:
+            self.logger.error(f"SMC Calculation Error: {e}")
+            return "SMC Error", []
+
+    def get_correlation_data(self, main_df, symbol, interval):
+        """
+        Fetches a related 'Truth Asset' and calculates correlation.
+        Returns: text_summary, raw_score
+        """
+        try:
+            if main_df is None or main_df.empty:
+                return "No Data", 0
+
+            # 1. Determine Comparison Asset
+            comp_symbol = "DX-Y.NYB" # Default: Dollar Index
+            comp_name = "DXY (Dollar Index)"
+            
+            # Logic map
+            if "USD" in symbol:
+                pass # Keep DXY
+            elif "JPY" in symbol:
+                comp_symbol = "^TNX" # 10Y Yields drive JPY
+                comp_name = "US 10Y Yields"
+            elif "XAU" in symbol or "GOLD" in symbol:
+                comp_symbol = "SI=F"
+                comp_name = "Silver"
+            elif "BTC" in symbol:
+                comp_symbol = "^IXIC" # Nasdaq
+                comp_name = "Nasdaq"
+
+            # 2. Fetch Comparison Data
+            # Must match the main timeframe/interval
+            comp_df = yf.download(
+                comp_symbol, 
+                period="1y", # ample buffer
+                interval=interval, 
+                progress=False,
+                auto_adjust=False
+            )
+            
+            if comp_df.empty:
+                return f"Correlation Data Unavailable for {comp_name}", 0
+
+            # 3. Align Data (Merge on Index)
+            # Use 'Close' prices
+            main_close = main_df['Close']
+            
+            # Handle MultiIndex if present in comp_df
+            if isinstance(comp_df.columns, pd.MultiIndex):
+                comp_close = comp_df['Close'][comp_symbol]
+            else:
+                comp_close = comp_df['Close']
+
+            # Aligns timestamps automatically
+            aligned = pd.concat([main_close, comp_close], axis=1, join='inner')
+            aligned.columns = ['Main', 'Comp']
+            
+            if len(aligned) < 50:
+                 return "Not enough aligned data", 0
+
+            # 4. Calculate Rolling Correlation (50 periods)
+            rolling_corr = aligned['Main'].rolling(window=50).corr(aligned['Comp'])
+            current_corr = rolling_corr.iloc[-1]
+            
+            # 5. Calculate recent performance (Last 5 candles) to detect divergence
+            # e.g. If Corr is -0.9 (Inverse), but both moved UP, that's a divergence.
+            main_move = (aligned['Main'].iloc[-1] - aligned['Main'].iloc[-5]) / aligned['Main'].iloc[-5]
+            comp_move = (aligned['Comp'].iloc[-1] - aligned['Comp'].iloc[-5]) / aligned['Comp'].iloc[-5]
+
+            status = "NORMAL"
+            if abs(current_corr) > 0.8:
+                # High Correlation exists
+                if current_corr < 0: # Inverse relationship (e.g. EURUSD vs DXY)
+                    # If they moved in SAME direction, it's a fakeout
+                    if (main_move > 0 and comp_move > 0) or (main_move < 0 and comp_move < 0):
+                        status = "⚠️ DIVERGENCE (FAKE-OUT RISK)"
+                else: # Direct relationship (e.g. AUDUSD vs NZDUSD)
+                    # If they moved in OPPOSITE direction
+                    if (main_move > 0 and comp_move < 0) or (main_move < 0 and comp_move > 0):
+                         status = "⚠️ DIVERGENCE (NON-CONFIRMED)"
+
+            text = (
+                f"INTER-MARKET CORRELATION ({comp_name}):\n"
+                f"- Correlation Coeff (50): {current_corr:.2f}\n"
+                f"- Status: {status}\n"
+                f"- {symbol} 5-bar Move: {main_move*100:.2f}%\n"
+                f"- {comp_name} 5-bar Move: {comp_move*100:.2f}%\n"
+            )
+            
+            return text, current_corr
+
+        except Exception as e:
+            self.logger.error(f"Correlation Error: {e}")
+            return f"Correlation Analysis Failed: {e}", 0

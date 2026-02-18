@@ -143,6 +143,15 @@ class MainWindow(ctk.CTk):
         self.macro_label = ctk.CTkLabel(self.input_panel, text="Global Regime: --", text_color="#AAAAAA", font=("Roboto", 12, "bold"))
         self.macro_label.pack(pady=(5, 0), padx=10, anchor="w")
 
+        # NEW: Sentiment Meter
+        ctk.CTkLabel(self.input_panel, text="News Sentiment:", font=("Roboto", 12)).pack(pady=(5, 0), padx=10, anchor="w")
+        self.sentiment_progress = ctk.CTkProgressBar(self.input_panel, height=12)
+        self.sentiment_progress.pack(pady=2, padx=10, fill="x")
+        self.sentiment_progress.set(0.5) # Center (Neutral)
+        
+        self.sentiment_label = ctk.CTkLabel(self.input_panel, text="Neutral (0.0)", font=("Roboto", 11))
+        self.sentiment_label.pack(pady=(0, 5), padx=10, anchor="w")
+
         # News Box
         ctk.CTkLabel(self.input_panel, text="Fundamental Context:", font=("Roboto", 13, "bold")).pack(pady=(5, 0), padx=10, anchor="w")
         self.news_textbox = ctk.CTkTextbox(self.input_panel, height=80)
@@ -495,3 +504,35 @@ class MainWindow(ctk.CTk):
             color = "#55FF55" # Green
             
         self.macro_label.configure(text=f"Global Regime: {regime}", text_color=color)
+
+    def update_sentiment_meter(self, score, summary, divergence_warning=None):
+        """
+        Updates the progress bar. Score is -1 to 1.
+        Progress bar expects 0 to 1.
+        """
+        # Map -1..1 to 0..1
+        normalized_score = (score + 1) / 2
+        self.sentiment_progress.set(normalized_score)
+        
+        # Color logic
+        color = "gray"
+        state = "Neutral"
+        if score > 0.2: 
+            state = "Bullish"
+            color = "#27AE60" # Green
+            self.sentiment_progress.configure(progress_color=color)
+        elif score < -0.2: 
+            state = "Bearish"
+            color = "#C0392B" # Red
+            self.sentiment_progress.configure(progress_color=color)
+        else:
+            self.sentiment_progress.configure(progress_color="gray")
+
+        text = f"{state} ({score:.2f}): {summary}"
+        if divergence_warning:
+            text += f"\n⚠️ {divergence_warning}"
+            self.sentiment_label.configure(text_color="#FF9800") # Orange warning
+        else:
+            self.sentiment_label.configure(text_color="silver")
+
+        self.sentiment_label.configure(text=text)

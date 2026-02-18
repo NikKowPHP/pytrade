@@ -184,7 +184,32 @@ class MainController:
             macro_text, macro_stats = self.macro_service.fetch_macro_context()
             self.view.after(0, lambda: self.view.update_macro_display(macro_stats))
 
-            auto_news = self.news_service.fetch_news(symbol)
+            # Update: unpack the tuple from news_service
+            auto_news, raw_headlines = self.news_service.fetch_news(symbol)
+            
+            # NEW: Sentiment Analysis
+            self.view.after(0, lambda: self.view.append_status("\n3.5. Analyzing News Sentiment..."))
+            sentiment_data = self.ai_trader.analyze_sentiment(raw_headlines, symbol, provider, model)
+            
+            sent_score = float(sentiment_data.get("score", 0))
+            sent_summary = sentiment_data.get("reasoning", "")
+            
+            # Detect Divergence
+            # 1. Tech Trend (Slope of EMA 50 or Price vs EMA 200)
+            last_close = self.last_df.iloc[-1]['Close']
+            ema_200 = self.last_df.iloc[-1]['EMA_200']
+            
+            tech_bullish = last_close > ema_200
+            
+            divergence_msg = None
+            if tech_bullish and sent_score < -0.4:
+                divergence_msg = "BEARISH DIVERGENCE: Price Rising but News is Negative!"
+            elif not tech_bullish and sent_score > 0.4:
+                divergence_msg = "BULLISH DIVERGENCE: Price Falling but News is Positive!"
+
+            # Update UI
+            self.view.after(0, lambda: self.view.update_sentiment_meter(sent_score, sent_summary, divergence_msg))
+
             calendar_text, is_high_impact = self.news_service.fetch_economic_calendar(symbol)
             
             # Safety Warning
@@ -194,12 +219,27 @@ class MainController:
                 calendar_text = f"!!! WARNING: {msg} !!!\n{calendar_text}"
 
             manual_news = inputs['news_context']
-            full_news = f"{manual_news}\n{auto_news}" if manual_news else auto_news
+            # Add to context for Master Agent
+            full_news = f"SENTIMENT SCORE: {sent_score} ({sent_summary})\nDIVERGENCE CHECK: {divergence_msg if divergence_msg else 'None'}\n\n{manual_news}\n{auto_news}"
             pivots = self.market_data.calculate_pivots(self.last_df)
             
+            # Calculate Smart Money Concepts
+            smc_text, smc_levels = self.market_data.calculate_smart_money(self.last_df)
+            
+            # NEW: Correlation Matrix
+            self.view.after(0, lambda: self.view.append_status("\n3.8. Checking Correlations..."))
+            corr_text, corr_score = self.market_data.get_correlation_data(self.last_df, symbol, inputs['timeframe'])
+            
+            # Update UI with correlation warning if needed
+            if "⚠️" in corr_text:
+                 self.view.after(0, lambda: self.view.append_status(f"\n{corr_text.splitlines()[2]}"))
+
             tech_summary = self.last_df.iloc[-1].to_dict()
             # Add mtf_trend for Master
             tech_summary['higher_timeframe'] = htf_context
+            # Add SMC to tech summary for Agents
+            tech_summary['smart_money_concepts'] = smc_text
+            tech_summary['correlations'] = corr_text  # Add to tech summary
 
             # 2. Sequential Agent Analysis (The Council)
             self.view.after(0, lambda: self.view.append_status("\n4. Consulting Quant Agent..."))
@@ -211,13 +251,20 @@ class MainController:
             self.view.after(0, lambda: self.view.append_status("\n6. Consulting Fundamental Agent..."))
             fund_report = self.ai_trader.analyze_fundamental(full_news, calendar_text, provider, model)
 
+            # NEW: Devil's Advocate
+            self.view.after(0, lambda: self.view.append_status("\n6.5. Summoning Devil's Advocate..."))
+            risk_report = self.ai_trader.analyze_risk(tech_summary, pivots, full_news, provider, model)
+
             # 3. Master Synthesis
             self.view.after(0, lambda: self.view.append_status("\n7. Master Decision in progress..."))
             
             council_reports = f"""
-            QUANT: {quant_report}
-            VISION: {vision_report}
-            FUNDAMENTAL: {fund_report}
+            QUANT ANALYST: {quant_report}
+            VISION ANALYST: {vision_report}
+            FUNDAMENTAL ANALYST: {fund_report}
+            ----------------------------------
+            DEVIL'S ADVOCATE (RISK ASSESSMENT):
+            {risk_report}
             """
             
             final_response = self.ai_trader.analyze_master(
