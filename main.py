@@ -5,6 +5,7 @@ from services.market_data import MarketDataProvider
 from services.ai_service import AITrader
 from services.news_service import NewsService
 from services.chart_service import ChartService
+from services.macro_service import MacroService
 from services.logger import Logger
 
 def main():
@@ -18,7 +19,8 @@ def main():
             'market': MarketDataProvider(),
             'ai': AITrader(),
             'news': NewsService(),
-            'chart': ChartService()
+            'chart': ChartService(),
+            'macro': MacroService()
         }
 
         # 3. Initialize View

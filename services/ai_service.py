@@ -315,17 +315,25 @@ You are an expert Forex Swing Trader. Analyze the attached chart image and the d
         """
         return self.analyze(prompt, provider=provider, model=model)
 
-    def analyze_master(self, council_reports, tech_details, provider, model):
+    def analyze_master(self, council_reports, tech_details, provider, model, macro_context=""):
         prompt = f"""
         MASTER AGENT: Trading Desk Head
         
-        COUNCIL REPORTS:
+        **1. GLOBAL MACRO REGIME**
+        {macro_context}
+        *Guidance:* 
+        - If VIX is spiking (>5%) or SPX crashing, we are in RISK-OFF. Avoid buying risky pairs (AUD, NZD, GBP). Look for USD/JPY/CHF safety.
+        - If SPX is rallying and VIX dropping, we are in RISK-ON.
+
+        **2. COUNCIL REPORTS**
         {council_reports}
 
-        MARKET SNAPSHOT:
+        **3. MARKET SNAPSHOT**
         {tech_details}
 
-        TASK: Synthesize the Council's reports. Make the final decision.
+        TASK: Synthesize the Council's reports WITH the Global Macro Context. 
+        If the technicals are good but the Macro Regime opposes the trade (e.g. Buying AUDJPY in a crash), REJECT the trade or reduce confidence significantly.
+
         OUTPUT FORMAT: Return ONLY valid JSON:
         {{
           "decision": "BUY/SELL/WAIT",
@@ -334,8 +342,8 @@ You are an expert Forex Swing Trader. Analyze the attached chart image and the d
           "stop_loss": float,
           "take_profit": float,
           "technical_analysis": "Summary of Quant & Vision",
-          "fundamental_analysis": "Summary of News",
-          "reasoning": "Final synthesis"
+          "fundamental_analysis": "Macro Regime + News",
+          "reasoning": "Final synthesis including Macro impact"
         }}
         """
         return self.analyze(prompt, provider=provider, model=model)

@@ -4,6 +4,7 @@ from services.logger import Logger
 from services.scanner_service import ScannerService
 from services.performance_service import PerformanceService
 from services.backtest_service import BacktestService
+from config import AI_MODELS
 
 class MainController:
     def __init__(self, view, services):
@@ -19,6 +20,8 @@ class MainController:
         
         self.performance_service = PerformanceService(self.market_data.db)
         self.backtester = BacktestService(self.market_data, self.ai_trader, self.chart_service)
+        self.macro_service = services['macro']
+        self.current_macro_text = ""
         
         # Inject AI into scanner for smart scanning
         self.scanner.ai_service = self.ai_trader
@@ -74,9 +77,9 @@ class MainController:
         try:
             if self.last_df is not None:
                 self.logger.info("Executing _render_chart_only")
-                html = self.chart_service.get_chart_html(self.last_df, None)
-                self.logger.info(f"Chart HTML generated (size: {len(html)}), calling view.embed_chart")
-                self.view.embed_chart(html)
+                # Use create_chart_figure instead of get_chart_html
+                fig = self.chart_service.create_chart_figure(self.last_df, None)
+                self.view.embed_chart(fig)
             else:
                 self.logger.warning("_render_chart_only called but last_df is None")
         except Exception as e:
@@ -152,8 +155,8 @@ class MainController:
             self.view.append_status("\n2. Generating Vision Data...")
             
             # 1. Update UI Chart immediately
-            html = self.chart_service.get_chart_html(self.last_df, None)
-            self.view.after(0, lambda: self.view.embed_chart(html))
+            fig = self.chart_service.create_chart_figure(self.last_df, None)
+            self.view.after(0, lambda: self.view.embed_chart(fig))
             
             # 2. Generate Image for AI
             chart_image = self.chart_service.generate_chart_image(self.last_df)
@@ -175,9 +178,12 @@ class MainController:
             model = inputs['model']
             strategy = inputs['strategy']
 
-            self.view.after(0, lambda: self.view.append_status("\n3. Gathering Context..."))
+            self.view.after(0, lambda: self.view.append_status("\n3. Gathering Context (News & Macro)..."))
             
             # 1. Gather Context
+            macro_text, macro_stats = self.macro_service.fetch_macro_context()
+            self.view.after(0, lambda: self.view.update_macro_display(macro_stats))
+
             auto_news = self.news_service.fetch_news(symbol)
             calendar_text, is_high_impact = self.news_service.fetch_economic_calendar(symbol)
             
@@ -218,7 +224,8 @@ class MainController:
                 council_reports, 
                 tech_summary,
                 provider=provider, 
-                model=model
+                model=model,
+                macro_context=macro_text
             )
 
             if "error" in final_response:
@@ -257,8 +264,8 @@ class MainController:
         
         # Update chart with levels
         self.logger.info("Updating chart with AI levels in _finalize_results")
-        html = self.chart_service.get_chart_html(self.last_df, ai_response)
-        self.view.embed_chart(html)
+        fig = self.chart_service.create_chart_figure(self.last_df, ai_response)
+        self.view.embed_chart(fig)
 
     def _format_report(self, ai, tech):
         return (
@@ -285,11 +292,8 @@ class MainController:
         self.view.after(0, lambda: self.view.populate_journal(rows))
 
     def get_models_for_provider(self, provider):
-        if provider == "Gemini": return ["gemini-2.0-flash", "gemini-2.0-flash-lite-preview-02-05", "gemini-1.5-flash"]
-        if provider == "Cerebras": return ["llama3.1-8b", "llama3.1-70b"]
-        if provider == "Groq": return ["llama-3.1-70b-versatile", "mixtral-8x7b-32768"]
-        if provider == "OpenRouter": return ["google/gemini-2.0-flash-lite-preview-02-05", "google/gemini-2.0-flash-001", "stepfun/step-3.5-flash:free"]
-        return []
+        """Fetches models from central config."""
+        return AI_MODELS.get(provider, [])
 
     # --- Scanner ---
     def run_market_scan(self):

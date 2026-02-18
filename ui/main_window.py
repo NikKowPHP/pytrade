@@ -1,6 +1,10 @@
 import customtkinter as ctk
-from tkinterweb import HtmlFrame
 from services.logger import Logger
+from config import AI_MODELS
+
+# NEW IMPORTS
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 class MainWindow(ctk.CTk):
     def __init__(self):
@@ -105,7 +109,7 @@ class MainWindow(ctk.CTk):
         self.provider_var = ctk.StringVar(value="Gemini")
         self.provider_option = ctk.CTkOptionMenu(
             row_prov, 
-            values=["Gemini", "Cerebras", "Groq", "OpenRouter"], 
+            values=list(AI_MODELS.keys()), 
             variable=self.provider_var, 
             command=self.on_provider_change,
             width=120
@@ -115,9 +119,11 @@ class MainWindow(ctk.CTk):
         # Model
         row_mod = ctk.CTkFrame(self.input_panel, fg_color="transparent")
         row_mod.pack(fill="x", padx=10, pady=2)
-        ctk.CTkLabel(row_mod, text="Model/Model:", font=("Roboto", 12)).pack(side="left")
-        self.model_var = ctk.StringVar(value="gemini-2.0-flash-exp")
-        self.model_option = ctk.CTkOptionMenu(row_mod, values=["gemini-2.0-flash-exp"], variable=self.model_var, width=120)
+        ctk.CTkLabel(row_mod, text="Model:", font=("Roboto", 12)).pack(side="left")
+        # Set default model dynamically
+        default_models = AI_MODELS.get("Gemini", [])
+        self.model_var = ctk.StringVar(value=default_models[0] if default_models else "")
+        self.model_option = ctk.CTkOptionMenu(row_mod, values=default_models, variable=self.model_var, width=120)
         self.model_option.pack(side="right")
 
         # Strategy (New)
@@ -133,8 +139,12 @@ class MainWindow(ctk.CTk):
         )
         self.strategy_option.pack(side="right")
 
+        # Macro Status Label
+        self.macro_label = ctk.CTkLabel(self.input_panel, text="Global Regime: --", text_color="#AAAAAA", font=("Roboto", 12, "bold"))
+        self.macro_label.pack(pady=(5, 0), padx=10, anchor="w")
+
         # News Box
-        ctk.CTkLabel(self.input_panel, text="Fundamental Context:", font=("Roboto", 13, "bold")).pack(pady=(10, 0), padx=10, anchor="w")
+        ctk.CTkLabel(self.input_panel, text="Fundamental Context:", font=("Roboto", 13, "bold")).pack(pady=(5, 0), padx=10, anchor="w")
         self.news_textbox = ctk.CTkTextbox(self.input_panel, height=80)
         self.news_textbox.pack(fill="x", padx=10, pady=5)
 
@@ -161,8 +171,8 @@ class MainWindow(ctk.CTk):
         self.chart_placeholder = ctk.CTkLabel(self.chart_frame, text="Select a pair to load chart", font=("Roboto", 14))
         self.chart_placeholder.grid(row=0, column=0)
         
-        # WebView for interactive charts
-        self.webview = None 
+        # Canvas for Matplotlib charts
+        self.canvas = None
 
     # --- View Actions ---
     def on_provider_change(self, provider):
@@ -238,25 +248,37 @@ class MainWindow(ctk.CTk):
         self.append_status(f"\nERROR: {message}\n")
         self.analyze_btn.configure(state="normal", text="Full AI Analysis")
 
-    def embed_chart(self, html):
+    def embed_chart(self, figure):
+        """
+        Renders a Matplotlib figure into the chart_frame.
+        """
         try:
-            self.logger.info(f"embed_chart called with HTML size: {len(html)}")
-            # Clear previous label if exists
-            if hasattr(self, 'chart_placeholder') and self.chart_placeholder.winfo_exists():
-                self.chart_placeholder.destroy()
-
-            if self.webview is None:
-                self.logger.info("Initializing new HtmlFrame for chart")
-                self.webview = HtmlFrame(self.chart_frame)
-                self.webview.pack(fill="both", expand=True)
+            self.logger.info("embed_chart called with Matplotlib Figure")
             
-            self.logger.info("Loading HTML into webview")
-            self.webview.load_html(html)
-            self.logger.info("WebView load_html completed")
+            # 1. Clear previous content (placeholder or old chart)
+            for widget in self.chart_frame.winfo_children():
+                widget.destroy()
+
+            # 2. Check if figure is valid
+            if figure is None:
+                self.chart_placeholder = ctk.CTkLabel(self.chart_frame, text="No Chart Data Available", font=("Roboto", 14))
+                self.chart_placeholder.grid(row=0, column=0)
+                return
+
+            # 3. Create Canvas
+            self.canvas = FigureCanvasTkAgg(figure, master=self.chart_frame)
+            self.canvas.draw()
+            
+            # 4. Pack widget
+            widget = self.canvas.get_tk_widget()
+            widget.pack(fill="both", expand=True)
+            
+            self.logger.info("Matplotlib chart packed successfully")
             
         except Exception as e:
             self.logger.exception(f"Error in embed_chart: {e}")
-            self.display_error(f"Chart Load Error: {e}")
+            lbl = ctk.CTkLabel(self.chart_frame, text=f"Chart Error: {e}")
+            lbl.pack()
 
     def create_journal_tab(self):
         # Refresh Button
@@ -370,22 +392,26 @@ class MainWindow(ctk.CTk):
         self.bt_days_option = ctk.CTkOptionMenu(ctrl_frame, values=["30", "60", "90"], variable=self.bt_days_var, width=80)
         self.bt_days_option.pack(side="left", padx=5)
 
-        # NEW: Provider Select
+        # Provider Select
         ctk.CTkLabel(ctrl_frame, text="AI Provider:").pack(side="left", padx=(15, 5))
         self.bt_provider_var = ctk.StringVar(value="Gemini")
         self.bt_provider_option = ctk.CTkOptionMenu(
             ctrl_frame, 
-            values=["Gemini", "Cerebras", "Groq", "OpenRouter"], 
+            values=list(AI_MODELS.keys()), 
             variable=self.bt_provider_var, 
             command=self.on_bt_provider_change,
             width=110
         )
         self.bt_provider_option.pack(side="left", padx=5)
 
-        # NEW: Model Select
+        # Model Select
         ctk.CTkLabel(ctrl_frame, text="Model:").pack(side="left", padx=(15, 5))
-        self.bt_model_var = ctk.StringVar(value="gemini-2.0-flash")
-        self.bt_model_option = ctk.CTkOptionMenu(ctrl_frame, values=["gemini-2.0-flash", "gemini-2.0-flash-lite-preview-02-05"], variable=self.bt_model_var, width=150)
+        
+        # Set default model dynamically
+        bt_default_models = AI_MODELS.get("Gemini", [])
+        self.bt_model_var = ctk.StringVar(value=bt_default_models[0] if bt_default_models else "")
+        
+        self.bt_model_option = ctk.CTkOptionMenu(ctrl_frame, values=bt_default_models, variable=self.bt_model_var, width=150)
         self.bt_model_option.pack(side="left", padx=5)
 
         self.bt_start_btn = ctk.CTkButton(ctrl_frame, text="Start Backtest", command=self.on_backtest_click, fg_color="#2B823A")
@@ -448,3 +474,24 @@ class MainWindow(ctk.CTk):
             lbl = ctk.CTkLabel(row, text=f"{t['time']} | {t['decision']} | Entry: {t['entry']} | Exit: {t['exit_price']} | Result: {t['result']}")
             lbl.configure(text_color=color)
             lbl.pack(padx=10, pady=5)
+
+    def update_macro_display(self, stats):
+        """Updates the regime label based on VIX/SPX."""
+        if not stats:
+            return
+            
+        spx = stats.get("SPX", 0)
+        vix = stats.get("VIX", 0)
+        
+        regime = "NEUTRAL"
+        color = "#AAAAAA"
+        
+        # Simple heuristic for display
+        if spx < -0.5 and vix > 2.0:
+            regime = "RISK-OFF (Caution)"
+            color = "#FF5555" # Red
+        elif spx > 0.5 and vix < -2.0:
+            regime = "RISK-ON (Aggressive)"
+            color = "#55FF55" # Green
+            
+        self.macro_label.configure(text=f"Global Regime: {regime}", text_color=color)

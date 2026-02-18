@@ -44,3 +44,11 @@ GEMINI_MODEL_ID = os.getenv("GEMINI_MODEL_ID", "gemini-3-preview")
 CEREBRAS_MODEL_ID = os.getenv("CEREBRAS_MODEL_ID", "gpt-oss-120b")
 GROQ_MODEL_ID = os.getenv("GROQ_MODEL_ID", "moonshotai/kimi-k2-instruct-0905")
 OPENROUTER_MODEL_ID = os.getenv("OPENROUTER_MODEL_ID", "stepfun/step-3.5-flash:free")
+
+# Centralized Model Configuration
+AI_MODELS = {
+    "Gemini": ["gemini-2.0-flash", "gemini-2.0-flash-lite-preview-02-05", "gemini-1.5-flash"],
+    "Cerebras": ["llama3.1-70b", "llama3.1-8b"],
+    "Groq": ["llama-3.1-70b-versatile", "mixtral-8x7b-32768", "gemma2-9b-it"],
+    "OpenRouter": ["google/gemini-2.0-flash-lite-preview-02-05", "google/gemini-2.0-flash-001", "stepfun/step-3.5-flash:free"]
+}

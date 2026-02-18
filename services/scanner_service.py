@@ -113,7 +113,7 @@ Return ONLY a valid JSON list of strings, e.g.: ["EURUSD", "GBPUSD", "XAUUSD"]
             # 3. Call AI (using a fast model if possible)
             if self.ai_service:
                 # Prefer a fast model for this batch op
-                response = self.ai_service.analyze(ai_prompt, provider="Gemini", model="gemini-2.0-flash-exp")
+                response = self.ai_service.analyze(ai_prompt, provider="Gemini", model="gemini-2.0-flash")
                 
                 # Expecting a list from the AI, handling if it returns a dict
                 if isinstance(response, list):
