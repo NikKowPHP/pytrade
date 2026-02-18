@@ -4,14 +4,19 @@ from cerebras.cloud.sdk import Cerebras
 import json
 import pandas as pd
 import os
-from config import GEMINI_API_KEY, CEREBRAS_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY
+from config import (
+    GEMINI_API_KEY, CEREBRAS_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY,
+    GEMINI_MODEL_ID, CEREBRAS_MODEL_ID, GROQ_MODEL_ID, OPENROUTER_MODEL_ID
+)
 from services.logger import Logger
 from groq import Groq
 from openai import OpenAI
+from services.database import Database
 
 class AITrader:
     def __init__(self):
         self.logger = Logger()
+        self.db = Database()
         
         # Initialize Gemini
         try:
@@ -20,7 +25,7 @@ class AITrader:
                 self.gemini_client = genai.Client(api_key=self.gemini_api_key)
             else:
                 self.gemini_client = None
-            self.gemini_model_id = "gemini-2.0-flash"
+            self.gemini_model_id = GEMINI_MODEL_ID
         except Exception as e:
             self.logger.error(f"Error initializing Gemini Client: {e}")
             self.gemini_client = None
@@ -32,7 +37,7 @@ class AITrader:
                 self.cerebras_client = Cerebras(api_key=self.cerebras_api_key)
             else:
                 self.cerebras_client = None
-            self.cerebras_model_id = "llama3.1-70b"
+            self.cerebras_model_id = CEREBRAS_MODEL_ID
         except Exception as e:
             self.logger.error(f"Error initializing Cerebras Client: {e}")
             self.cerebras_client = None
@@ -44,7 +49,7 @@ class AITrader:
                 self.groq_client = Groq(api_key=self.groq_api_key)
             else:
                 self.groq_client = None
-            self.groq_model_id = "llama-3.1-70b-versatile"
+            self.groq_model_id = GROQ_MODEL_ID
         except Exception as e:
             self.logger.error(f"Error initializing Groq Client: {e}")
             self.groq_client = None
@@ -59,7 +64,7 @@ class AITrader:
                 )
             else:
                 self.openrouter_client = None
-            self.openrouter_model_id = "stepfun/step-3.5-flash:free"
+            self.openrouter_model_id = OPENROUTER_MODEL_ID
         except Exception as e:
             self.logger.error(f"Error initializing OpenRouter Client: {e}")
             self.openrouter_client = None
@@ -78,6 +83,15 @@ class AITrader:
         try:
             latest = df.iloc[-1]
             
+            # Fetch Recent Failures (Learned Context)
+            failures = self.db.get_recent_failures(symbol, limit=3)
+            history_context = "No recent failed trades for this symbol."
+            if failures:
+                history_context = f"You previously lost {len(failures)} trades on this pair. Review your previous mistakes:\n"
+                for i, reason in enumerate(failures, 1):
+                    history_context += f"- Mistake {i}: {reason}\n"
+                history_context += "Do not repeat these errors. Adjust your entry or bias accordingly."
+
             # Format Pivot Levels
             pivot_text = "N/A"
             if pivots:
@@ -106,6 +120,9 @@ You are an expert Forex Swing Trader. Analyze the attached chart image and the d
 **4. FUNDAMENTALS**
 {news_context}
 {calendar_context}
+
+**5. HISTORY (Learned Context)**
+{history_context}
 
 **TASK:**
 1. **Visual Analysis:** Look at the chart image. Identify patterns (Flags, Triangles, Double Tops/Bottoms) and Price Action structures.

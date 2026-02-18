@@ -145,12 +145,23 @@ class MarketDataProvider:
             
             # LOGGING THE LATEST DATA FOR DEBUGGING
             latest = df.iloc[-1]
+            
+            # Safely extract and format values
+            close = latest.get('Close', 0)
+            rsi = latest.get('RSI')
+            atr = latest.get('ATR')
+            ema200 = latest.get('EMA_200')
+            
+            rsi_str = f"{rsi:.2f}" if rsi is not None and not pd.isna(rsi) else "N/A"
+            atr_str = f"{atr:.5f}" if atr is not None and not pd.isna(atr) else "N/A"
+            ema_str = f"{ema200:.5f}" if ema200 is not None and not pd.isna(ema200) else "N/A"
+
             self.logger.info(
                 f"LATEST TECHNICALS -> "
-                f"Close: {latest['Close']:.5f} | "
-                f"RSI: {latest['RSI']:.2f} | "
-                f"ATR: {latest['ATR']:.5f} | "
-                f"EMA200: {latest['EMA_200']:.5f}"
+                f"Close: {close:.5f} | "
+                f"RSI: {rsi_str} | "
+                f"ATR: {atr_str} | "
+                f"EMA200: {ema_str}"
             )
             
             return df

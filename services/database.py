@@ -281,3 +281,20 @@ class Database:
         except Exception as e:
             self.logger.error(f"Error fetching stats: {e}")
             return {}
+
+    def get_recent_failures(self, symbol, limit=3):
+        """Retrieves reasoning from the last few failed trades for a symbol."""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT reasoning FROM trade_journal 
+                WHERE symbol = ? AND result = 'LOSS' 
+                ORDER BY timestamp DESC LIMIT ?
+            ''', (symbol, limit))
+            rows = cursor.fetchall()
+            conn.close()
+            return [row[0] for row in rows if row[0]]
+        except Exception as e:
+            self.logger.error(f"Error fetching recent failures for {symbol}: {e}")
+            return []

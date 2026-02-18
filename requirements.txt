@@ -8,3 +8,6 @@ packaging
 cerebras_cloud_sdk
 groq
 openai
+matplotlib
+mplfinance
+tkinterweb

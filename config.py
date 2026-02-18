@@ -38,3 +38,9 @@ if not OANDA_API_KEY:
     print("Warning: OANDA_API_KEY not found in environment variables or .env file.")
 if not OANDA_ACCOUNT_ID:
     print("Warning: OANDA_ACCOUNT_ID not found in environment variables or .env file.")
+
+# AI Model Definitions
+GEMINI_MODEL_ID = os.getenv("GEMINI_MODEL_ID", "gemini-3-preview")
+CEREBRAS_MODEL_ID = os.getenv("CEREBRAS_MODEL_ID", "gpt-oss-120b")
+GROQ_MODEL_ID = os.getenv("GROQ_MODEL_ID", "moonshotai/kimi-k2-instruct-0905")
+OPENROUTER_MODEL_ID = os.getenv("OPENROUTER_MODEL_ID", "stepfun/step-3.5-flash:free")

@@ -1,10 +1,12 @@
 import customtkinter as ctk
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from tkinterweb import HtmlFrame
+from services.logger import Logger
 
 class MainWindow(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.controller = None # Injected later
+        self.logger = Logger()
         
         # Window Setup
         self.title("AI Forex Swing Assistant - Professional Edition")
@@ -25,7 +27,8 @@ class MainWindow(ctk.CTk):
         self.tab_view.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
         self.tab_view.add("Dashboard")
         self.tab_view.add("Journal")
-        self.tab_view.add("Stats") # NEW TAB
+        self.tab_view.add("Stats") 
+        self.tab_view.add("Backtest") # NEW TAB
         
         # --- DASHBOARD TAB ---
         self.dashboard = self.tab_view.tab("Dashboard")
@@ -40,6 +43,9 @@ class MainWindow(ctk.CTk):
 
         # --- STATS TAB ---
         self.create_stats_tab()
+
+        # --- BACKTEST TAB ---
+        self.create_backtest_tab()
 
         # 4. Content Area (Scanner + Analysis + Chart)
         self.create_content_area()
@@ -154,6 +160,9 @@ class MainWindow(ctk.CTk):
         
         self.chart_placeholder = ctk.CTkLabel(self.chart_frame, text="Select a pair to load chart", font=("Roboto", 14))
         self.chart_placeholder.grid(row=0, column=0)
+        
+        # WebView for interactive charts
+        self.webview = None 
 
     # --- View Actions ---
     def on_provider_change(self, provider):
@@ -229,14 +238,25 @@ class MainWindow(ctk.CTk):
         self.append_status(f"\nERROR: {message}\n")
         self.analyze_btn.configure(state="normal", text="Full AI Analysis")
 
-    def embed_chart(self, fig):
-        # Clear previous
-        for widget in self.chart_frame.winfo_children():
-            widget.destroy()
-        
-        canvas = FigureCanvasTkAgg(fig, master=self.chart_frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True)
+    def embed_chart(self, html):
+        try:
+            self.logger.info(f"embed_chart called with HTML size: {len(html)}")
+            # Clear previous label if exists
+            if hasattr(self, 'chart_placeholder') and self.chart_placeholder.winfo_exists():
+                self.chart_placeholder.destroy()
+
+            if self.webview is None:
+                self.logger.info("Initializing new HtmlFrame for chart")
+                self.webview = HtmlFrame(self.chart_frame)
+                self.webview.pack(fill="both", expand=True)
+            
+            self.logger.info("Loading HTML into webview")
+            self.webview.load_html(html)
+            self.logger.info("WebView load_html completed")
+            
+        except Exception as e:
+            self.logger.exception(f"Error in embed_chart: {e}")
+            self.display_error(f"Chart Load Error: {e}")
 
     def create_journal_tab(self):
         # Refresh Button
@@ -332,3 +352,99 @@ class MainWindow(ctk.CTk):
         self.model_box.delete("0.0", "end")
         self.model_box.insert("0.0", model_text)
         self.model_box.configure(state="disabled")
+
+    # --- BACKTEST TAB METHODS ---
+
+    def create_backtest_tab(self):
+        self.backtest_tab = self.tab_view.tab("Backtest")
+        self.backtest_tab.grid_columnconfigure(0, weight=1)
+        self.backtest_tab.grid_rowconfigure(1, weight=1)
+
+        # 1. Controls Top Bar
+        ctrl_frame = ctk.CTkFrame(self.backtest_tab)
+        ctrl_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
+        
+        # Duration Select
+        ctk.CTkLabel(ctrl_frame, text="Duration (Days):").pack(side="left", padx=5)
+        self.bt_days_var = ctk.StringVar(value="60")
+        self.bt_days_option = ctk.CTkOptionMenu(ctrl_frame, values=["30", "60", "90"], variable=self.bt_days_var, width=80)
+        self.bt_days_option.pack(side="left", padx=5)
+
+        # NEW: Provider Select
+        ctk.CTkLabel(ctrl_frame, text="AI Provider:").pack(side="left", padx=(15, 5))
+        self.bt_provider_var = ctk.StringVar(value="Gemini")
+        self.bt_provider_option = ctk.CTkOptionMenu(
+            ctrl_frame, 
+            values=["Gemini", "Cerebras", "Groq", "OpenRouter"], 
+            variable=self.bt_provider_var, 
+            command=self.on_bt_provider_change,
+            width=110
+        )
+        self.bt_provider_option.pack(side="left", padx=5)
+
+        # NEW: Model Select
+        ctk.CTkLabel(ctrl_frame, text="Model:").pack(side="left", padx=(15, 5))
+        self.bt_model_var = ctk.StringVar(value="gemini-2.0-flash")
+        self.bt_model_option = ctk.CTkOptionMenu(ctrl_frame, values=["gemini-2.0-flash", "gemini-2.0-flash-lite-preview-02-05"], variable=self.bt_model_var, width=150)
+        self.bt_model_option.pack(side="left", padx=5)
+
+        self.bt_start_btn = ctk.CTkButton(ctrl_frame, text="Start Backtest", command=self.on_backtest_click, fg_color="#2B823A")
+        self.bt_start_btn.pack(side="left", padx=20)
+
+        self.bt_progress = ctk.CTkProgressBar(ctrl_frame)
+        self.bt_progress.pack(side="left", padx=10, fill="x", expand=True)
+        self.bt_progress.set(0)
+
+        self.bt_status_lbl = ctk.CTkLabel(ctrl_frame, text="Ready")
+        self.bt_status_lbl.pack(side="right", padx=10)
+
+        # 2. Results Area
+        results_frame = ctk.CTkFrame(self.backtest_tab)
+        results_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        results_frame.grid_columnconfigure(0, weight=1)
+        results_frame.grid_rowconfigure(1, weight=1)
+
+        # Summary Row
+        self.bt_summary_lbl = ctk.CTkLabel(results_frame, text="Results: -- | Win Rate: --% | Profit Factor: --", font=("Roboto", 16, "bold"))
+        self.bt_summary_lbl.grid(row=0, column=0, pady=10)
+
+        # Trades List
+        self.bt_trades_list = ctk.CTkScrollableFrame(results_frame)
+        self.bt_trades_list.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
+
+    def on_bt_provider_change(self, provider):
+        if self.controller:
+            models = self.controller.get_models_for_provider(provider)
+            self.bt_model_option.configure(values=models)
+            if models:
+                self.bt_model_var.set(models[0])
+
+    def on_backtest_click(self):
+        if self.controller:
+            self.bt_start_btn.configure(state="disabled", text="Running...")
+            self.controller.start_backtest()
+
+    def update_backtest_progress(self, current, total):
+        progress = current / total
+        self.bt_progress.set(progress)
+        self.bt_status_lbl.configure(text=f"Day {current}/{total}")
+
+    def display_backtest_results(self, results):
+        self.bt_summary_lbl.configure(
+            text=f"Total: {results['total_trades']} | Win Rate: {results['win_rate']:.1f}% | Profit Factor: {results['profit_factor']:.2f}"
+        )
+        self.bt_start_btn.configure(state="normal", text="Start Backtest")
+
+        # Clear list
+        for widget in self.bt_trades_list.winfo_children():
+            widget.destroy()
+
+        # Add trades to list
+        for t in results['trades']:
+            color = "#27AE60" if t['result'] == "WIN" else "#C0392B"
+            row = ctk.CTkFrame(self.bt_trades_list)
+            row.pack(fill="x", pady=2)
+            
+            lbl = ctk.CTkLabel(row, text=f"{t['time']} | {t['decision']} | Entry: {t['entry']} | Exit: {t['exit_price']} | Result: {t['result']}")
+            lbl.configure(text_color=color)
+            lbl.pack(padx=10, pady=5)
