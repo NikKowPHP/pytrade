@@ -146,5 +146,8 @@ class NewsService:
             return events_text, high_impact_imminent
 
         except Exception as e:
+            if hasattr(e, 'response') and e.response.status_code == 429:
+                self.logger.warning("ForexFactory Rate Limit (429).")
+                return "Economic Calendar unavailable (Rate Limited).\n", False
             self.logger.error(f"Error fetching Economic Calendar: {e}")
             return "Error fetching calendar.\n", False

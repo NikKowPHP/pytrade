@@ -92,7 +92,8 @@ class ChartService:
             buf = io.BytesIO()
             fig.savefig(buf, format='png', dpi=100)
             buf.seek(0)
-            plt.close(fig) # Close to free memory
+            fig.clf() # Clear to free memory without closing the figure manager
+            plt.close(fig)
             
             # Convert to PIL Image (standard for many SDKs)
             return Image.open(buf)

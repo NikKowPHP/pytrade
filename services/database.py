@@ -55,6 +55,11 @@ class Database:
                 except Exception:
                     pass # Columns might already exist in a fresh create
             
+            # Ensure model column exists for performance tracking
+            try:
+                cursor.execute("ALTER TABLE trade_journal ADD COLUMN model TEXT")
+            except: pass
+            
             conn.commit()
             conn.close()
         except Exception as e:
@@ -67,12 +72,12 @@ class Database:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO trade_journal 
-                (symbol, timeframe, provider, decision, entry, stop_loss, take_profit, confidence, reasoning)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (symbol, timeframe, provider, decision, entry, stop_loss, take_profit, confidence, reasoning, model)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 data['symbol'], data['timeframe'], data['provider'], 
                 data['decision'], data['entry'], data['stop_loss'], data['take_profit'], 
-                data['confidence'], data['reasoning']
+                data['confidence'], data['reasoning'], data.get('model')
             ))
             conn.commit()
             conn.close()
@@ -249,3 +254,30 @@ class Database:
             self.logger.info(f"Updated trade {trade_id} result to {result}")
         except Exception as e:
             self.logger.error(f"Error updating trade result: {e}")
+
+    def get_performance_stats(self):
+        """Calculates win rates and model efficiency."""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            
+            # Overall Stats
+            cursor.execute("SELECT result, COUNT(*) FROM trade_journal WHERE result IN ('WIN', 'LOSS') GROUP BY result")
+            outcomes = dict(cursor.fetchall())
+            
+            # Model Stats
+            cursor.execute("""
+                SELECT provider, 
+                       COUNT(CASE WHEN result = 'WIN' THEN 1 END) as wins,
+                       COUNT(CASE WHEN result = 'LOSS' THEN 1 END) as losses
+                FROM trade_journal 
+                WHERE result IN ('WIN', 'LOSS')
+                GROUP BY provider
+            """)
+            model_performance = cursor.fetchall()
+            
+            conn.close()
+            return {"outcomes": outcomes, "models": model_performance}
+        except Exception as e:
+            self.logger.error(f"Error fetching stats: {e}")
+            return {}

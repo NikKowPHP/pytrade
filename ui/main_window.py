@@ -24,7 +24,8 @@ class MainWindow(ctk.CTk):
         self.tab_view = ctk.CTkTabview(self)
         self.tab_view.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
         self.tab_view.add("Dashboard")
-        self.tab_view.add("Journal") # NEW TAB
+        self.tab_view.add("Journal")
+        self.tab_view.add("Stats") # NEW TAB
         
         # --- DASHBOARD TAB ---
         self.dashboard = self.tab_view.tab("Dashboard")
@@ -36,6 +37,9 @@ class MainWindow(ctk.CTk):
         self.journal_tab.grid_columnconfigure(0, weight=1)
         self.journal_tab.grid_rowconfigure(0, weight=1)
         self.create_journal_tab()
+
+        # --- STATS TAB ---
+        self.create_stats_tab()
 
         # 4. Content Area (Scanner + Analysis + Chart)
         self.create_content_area()
@@ -110,6 +114,19 @@ class MainWindow(ctk.CTk):
         self.model_option = ctk.CTkOptionMenu(row_mod, values=["gemini-2.0-flash-exp"], variable=self.model_var, width=120)
         self.model_option.pack(side="right")
 
+        # Strategy (New)
+        row_strat = ctk.CTkFrame(self.input_panel, fg_color="transparent")
+        row_strat.pack(fill="x", padx=10, pady=2)
+        ctk.CTkLabel(row_strat, text="Strategy:", font=("Roboto", 12)).pack(side="left")
+        self.strategy_var = ctk.StringVar(value="Trend Following")
+        self.strategy_option = ctk.CTkOptionMenu(
+            row_strat, 
+            values=["Trend Following", "Reversal", "Breakout"], 
+            variable=self.strategy_var,
+            width=120
+        )
+        self.strategy_option.pack(side="right")
+
         # News Box
         ctk.CTkLabel(self.input_panel, text="Fundamental Context:", font=("Roboto", 13, "bold")).pack(pady=(10, 0), padx=10, anchor="w")
         self.news_textbox = ctk.CTkTextbox(self.input_panel, height=80)
@@ -157,6 +174,7 @@ class MainWindow(ctk.CTk):
             "timeframe": self.timeframe_var.get(),
             "provider": self.provider_var.get(),
             "model": self.model_var.get(),
+            "strategy": self.strategy_var.get(), # NEW
             "news_context": self.news_textbox.get("1.0", "end").strip()
         }
 
@@ -279,3 +297,38 @@ class MainWindow(ctk.CTk):
                 if i == 2: # Color the Decision column
                     lbl.configure(text_color=color, font=("Roboto", 12, "bold"))
                 lbl.pack(side="left", padx=2)
+
+    def create_stats_tab(self):
+        self.stats_tab = self.tab_view.tab("Stats")
+        
+        self.stats_container = ctk.CTkFrame(self.stats_tab)
+        self.stats_container.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        self.win_rate_lbl = ctk.CTkLabel(self.stats_container, text="Win Rate: --%", font=("Roboto", 24, "bold"))
+        self.win_rate_lbl.pack(pady=20)
+        
+        self.model_box = ctk.CTkTextbox(self.stats_container, font=("Consolas", 14))
+        self.model_box.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        ctk.CTkButton(self.stats_tab, text="Refresh Statistics", command=lambda: self.controller.update_stats()).pack(pady=10)
+
+    def update_stats_display(self, stats):
+        outcomes = stats.get("outcomes", {})
+        wins = outcomes.get("WIN", 0)
+        losses = outcomes.get("LOSS", 0)
+        total = wins + losses
+        
+        wr = (wins / total * 100) if total > 0 else 0
+        self.win_rate_lbl.configure(text=f"Win Rate: {wr:.1f}% ({wins}W / {losses}L)")
+        
+        # Model Breakdown
+        model_text = "MODEL PERFORMANCE BREAKDOWN:\n" + "="*30 + "\n"
+        for m in stats.get("models", []):
+            m_total = m[1] + m[2]
+            m_wr = (m[1] / m_total * 100) if m_total > 0 else 0
+            model_text += f"{m[0]:<15} | WR: {m_wr:>5.1f}% | Total: {m_total}\n"
+        
+        self.model_box.configure(state="normal")
+        self.model_box.delete("0.0", "end")
+        self.model_box.insert("0.0", model_text)
+        self.model_box.configure(state="disabled")

@@ -1,6 +1,5 @@
-import yfinance as yf
 import pandas as pd
-from datetime import datetime
+import yfinance as yf
 from services.logger import Logger
 
 class PerformanceService:
@@ -8,74 +7,49 @@ class PerformanceService:
         self.logger = Logger()
         self.db = db
 
-    def run_grader(self):
-        """Checks all open trades to see if they hit SL or TP."""
-        self.logger.info("Running Trade Grader...")
-        trades = self.db.get_open_trades()
+    def grade_open_trades(self):
+        """Checks historical price data to resolve open AI signals."""
+        self.logger.info("Verifying trade outcomes...")
+        open_trades = self.db.get_open_trades()
         
-        if not trades:
-            return
-
-        for trade in trades:
+        for trade in open_trades:
             try:
                 symbol = trade['symbol']
-                entry_ts = pd.to_datetime(trade['timestamp'])
-                
-                # Determine direction
-                # If TP > Entry -> BUY, Else SELL
-                direction = "BUY" if trade['take_profit'] > trade['entry'] else "SELL"
+                # Use hourly data for precise hit detection
+                ticker = f"{symbol}=X" if len(symbol) == 6 and not symbol.endswith('=X') else symbol
                 
                 # Fetch data since entry
-                # We use yfinance to get hourly data from that date
-                # Note: yf.download is strict on start dates. We'll fetch last 30 days to be safe 
-                # if the trade is recent.
-                
-                ticker = f"{symbol}=X" if not symbol.endswith('=X') else symbol
-                df = yf.download(ticker, period="1mo", interval="1h", progress=False)
+                df = yf.download(ticker, start=trade['timestamp'], interval="1h", progress=False)
                 
                 if df.empty:
                     continue
-                    
-                # Filter data to be AFTER entry time
-                # Ensure timezone compatibility (localize if needed, naive here for simplicity)
-                if df.index.tz is not None:
-                    entry_ts = entry_ts.tz_localize(df.index.tz)
-                
-                mask = df.index > entry_ts
-                future_data = df.loc[mask]
-                
-                if future_data.empty:
-                    continue
 
-                # Check for hits
+                direction = "BUY" if trade['take_profit'] > trade['entry'] else "SELL"
                 result = None
-                exit_price = 0.0
+                exit_price = None
 
-                for index, row in future_data.iterrows():
-                    high = float(row['High'])
-                    low = float(row['Low'])
+                for _, row in df.iterrows():
+                    hi, lo = float(row['High']), float(row['Low'])
                     
                     if direction == "BUY":
-                        if high >= trade['take_profit']:
-                            result = "WIN"
-                            exit_price = trade['take_profit']
-                            break
-                        if low <= trade['stop_loss']:
-                            result = "LOSS"
-                            exit_price = trade['stop_loss']
-                            break
+                        if hi >= trade['take_profit']: 
+                            result, exit_price = "WIN", trade['take_profit']
+                        elif lo <= trade['stop_loss']: 
+                            result, exit_price = "LOSS", trade['stop_loss']
                     else: # SELL
-                        if low <= trade['take_profit']:
-                            result = "WIN"
-                            exit_price = trade['take_profit']
-                            break
-                        if high >= trade['stop_loss']:
-                            result = "LOSS"
-                            exit_price = trade['stop_loss']
-                            break
-                
+                        if lo <= trade['take_profit']: 
+                            result, exit_price = "WIN", trade['take_profit']
+                        elif hi >= trade['stop_loss']: 
+                            result, exit_price = "LOSS", trade['stop_loss']
+                    
+                    if result: 
+                        break
+
                 if result:
                     self.db.update_trade_result(trade['id'], result, exit_price)
-
             except Exception as e:
-                self.logger.error(f"Error grading trade {trade.get('id')}: {e}")
+                self.logger.error(f"Grader error for ID {trade['id']}: {e}")
+
+    def run_grader(self):
+        """Alias for grade_open_trades to maintain compatibility if needed."""
+        self.grade_open_trades()

@@ -64,6 +64,12 @@ class AITrader:
             self.logger.error(f"Error initializing OpenRouter Client: {e}")
             self.openrouter_client = None
 
+        self.STRATEGY_PROMPTS = {
+            "Trend Following": "Focus on EMA 200 alignment. Ignore overbought RSI if trend is strong. Look for pullbacks to support.",
+            "Reversal": "Focus on RSI divergences and exhaustion candles near Pivot R3/S3. Look for Double Tops/Bottoms.",
+            "Breakout": "Focus on narrowing volatility (low ATR) and price consolidation near key Pivot levels. Look for high-volume candles."
+        }
+
 
     def generate_prompt(self, df, symbol, timeframe, news_context="", calendar_context="", pivots=None, mtf_trend=""):
         """
@@ -262,5 +268,59 @@ You are an expert Forex Swing Trader. Analyze the attached chart image and the d
             else:
                 self.logger.error(f"Invalid JSON response: {clean_text[:100]}...")
                 return {"error": f"Invalid JSON response. See logs for raw output."}
+
+    def analyze_quant(self, tech_data, pivots, strategy, provider, model):
+        prompt = f"""
+        AGENT: Quant Analyst
+        STRATEGY: {strategy} - {self.STRATEGY_PROMPTS.get(strategy)}
+        DATA: {tech_data}
+        LEVELS: {pivots}
+        TASK: Analyze the mathematical probabilities. Is the momentum and price structure favorable? 
+        Output a brief technical verdict.
+        """
+        return self.analyze(prompt, provider=provider, model=model)
+
+    def analyze_vision(self, image, strategy, provider, model):
+        prompt = f"""
+        AGENT: Chart Pattern Expert
+        STRATEGY: {strategy}
+        TASK: Analyze the provided chart image. Identify trendlines, support/resistance zones, and patterns (flags, wedges, etc).
+        Output a brief visual verdict.
+        """
+        return self.analyze(prompt, image=image, provider=provider, model=model)
+
+    def analyze_fundamental(self, news, calendar, provider, model):
+        prompt = f"""
+        AGENT: Fundamental Macro Analyst
+        DATA: {news} {calendar}
+        TASK: Analyze the economic impact. Are there high-impact events or news sentiment that should block a trade?
+        Output a brief fundamental verdict.
+        """
+        return self.analyze(prompt, provider=provider, model=model)
+
+    def analyze_master(self, council_reports, tech_details, provider, model):
+        prompt = f"""
+        MASTER AGENT: Trading Desk Head
+        
+        COUNCIL REPORTS:
+        {council_reports}
+
+        MARKET SNAPSHOT:
+        {tech_details}
+
+        TASK: Synthesize the Council's reports. Make the final decision.
+        OUTPUT FORMAT: Return ONLY valid JSON:
+        {{
+          "decision": "BUY/SELL/WAIT",
+          "confidence_score": 0-100,
+          "entry": float,
+          "stop_loss": float,
+          "take_profit": float,
+          "technical_analysis": "Summary of Quant & Vision",
+          "fundamental_analysis": "Summary of News",
+          "reasoning": "Final synthesis"
+        }}
+        """
+        return self.analyze(prompt, provider=provider, model=model)
 
 

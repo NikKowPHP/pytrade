@@ -29,16 +29,22 @@ class MainController:
         self.view.symbol_option.configure(values=self.scan_pairs)
 
     def on_startup(self):
-        """Called when UI is ready."""
-        threading.Thread(target=self._startup_worker, daemon=True).start()
-        self.load_journal_data()
+        """Grades trades and loads stats on start."""
+        def startup_tasks():
+            self.performance_service.grade_open_trades()
+            self.update_stats()
+            self._startup_worker()
+            self.load_journal_data()
+            
+        threading.Thread(target=startup_tasks, daemon=True).start()
+
+    def update_stats(self):
+        """Fetches stats from DB and updates UI."""
+        stats = self.market_data.db.get_performance_stats()
+        self.view.after(0, lambda: self.view.update_stats_display(stats))
 
     def _startup_worker(self):
-        """Runs on app startup."""
-        # 1. Run Grader
-        threading.Thread(target=self.performance_service.run_grader, daemon=True).start()
-        
-        # 2. Existing startup logic
+        """Step 1: Fetch Data (Thread)"""
         try:
             inputs = self.view.get_inputs()
             symbol = inputs['symbol']
@@ -155,61 +161,70 @@ class MainController:
             self.view.analyze_btn.configure(state="normal", text="Analyze Symbol")
 
     def _pipeline_step_3_ai(self, chart_image, htf_context):
-        """Step 3: Intelligence (Thread)."""
+        """Step 3: Intelligence (Thread) rewritten for Council Architecture."""
         try:
             inputs = self.view.get_inputs()
             symbol = inputs['symbol']
+            provider = inputs['provider']
+            model = inputs['model']
+            strategy = inputs['strategy']
+
+            self.view.after(0, lambda: self.view.append_status("\n3. Gathering Context..."))
             
-            self.view.after(0, lambda: self.view.append_status("\n3. Fetching Fundamentals..."))
-            
-            # Fundamentals
+            # 1. Gather Context
             auto_news = self.news_service.fetch_news(symbol)
-            # NEW: Receive tuple (text, is_danger)
-            calendar, is_high_impact = self.news_service.fetch_economic_calendar(symbol)
+            calendar_text, is_high_impact = self.news_service.fetch_economic_calendar(symbol)
             
-            # SAFETY RULE
+            # Safety Warning
             if is_high_impact:
                 msg = "⚠️ HIGH IMPACT EVENT DETECTED TODAY. TRADING IS RISKY."
                 self.view.after(0, lambda: self.view.append_status(f"\n\n{msg}"))
-                # We inject this warning strongly into the prompt
-                calendar = f"!!! WARNING: {msg} !!!\n{calendar}"
-                
-            full_context = f"{inputs['news_context']}\n\n{auto_news}" if inputs['news_context'] else auto_news
-            
-            # Pivots
+                calendar_text = f"!!! WARNING: {msg} !!!\n{calendar_text}"
+
+            manual_news = inputs['news_context']
+            full_news = f"{manual_news}\n{auto_news}" if manual_news else auto_news
             pivots = self.market_data.calculate_pivots(self.last_df)
+            
+            tech_summary = self.last_df.iloc[-1].to_dict()
+            # Add mtf_trend for Master
+            tech_summary['higher_timeframe'] = htf_context
 
-            self.view.after(0, lambda: self.view.append_status("\n4. Consulting AI (Vision + Data)..."))
+            # 2. Sequential Agent Analysis (The Council)
+            self.view.after(0, lambda: self.view.append_status("\n4. Consulting Quant Agent..."))
+            quant_report = self.ai_trader.analyze_quant(tech_summary, pivots, strategy, provider, model)
 
-            # Generate Prompt
-            prompt, tech_details = self.ai_trader.generate_prompt(
-                self.last_df, 
-                symbol, 
-                inputs['timeframe'],
-                news_context=full_context, 
-                calendar_context=calendar,
-                pivots=pivots,
-                mtf_trend=htf_context
+            self.view.after(0, lambda: self.view.append_status("\n5. Consulting Vision Agent..."))
+            vision_report = self.ai_trader.analyze_vision(chart_image, strategy, provider, model)
+
+            self.view.after(0, lambda: self.view.append_status("\n6. Consulting Fundamental Agent..."))
+            fund_report = self.ai_trader.analyze_fundamental(full_news, calendar_text, provider, model)
+
+            # 3. Master Synthesis
+            self.view.after(0, lambda: self.view.append_status("\n7. Master Decision in progress..."))
+            
+            council_reports = f"""
+            QUANT: {quant_report}
+            VISION: {vision_report}
+            FUNDAMENTAL: {fund_report}
+            """
+            
+            final_response = self.ai_trader.analyze_master(
+                council_reports, 
+                tech_summary,
+                provider=provider, 
+                model=model
             )
 
-            # Call AI
-            ai_response = self.ai_trader.analyze(
-                prompt, 
-                image=chart_image,
-                provider=inputs['provider'], 
-                model=inputs['model']
-            )
-
-            if "error" in ai_response:
-                self.view.after(0, lambda: self.view.display_error(ai_response['error']))
+            if "error" in final_response:
+                self.view.after(0, lambda: self.view.display_error(final_response['error']))
                 self.view.after(0, lambda: self.view.analyze_btn.configure(state="normal", text="Analyze Symbol"))
                 return
 
-            # Finish
-            self.view.after(0, lambda: self._finalize_results(ai_response, tech_details))
+            # 4. Finalize
+            self.view.after(0, lambda: self._finalize_results(final_response, {"symbol": symbol, "price": tech_summary['Close']}))
 
         except Exception as e:
-            self.logger.exception(f"Pipeline Step 3 Error: {e}")
+            self.logger.exception(f"Council Pipeline Error: {e}")
             self.view.after(0, lambda: self.view.display_error(str(e)))
             self.view.after(0, lambda: self.view.analyze_btn.configure(state="normal", text="Analyze Symbol"))
 
@@ -229,7 +244,8 @@ class MainController:
             "stop_loss": ai_response.get('stop_loss'),
             "take_profit": ai_response.get('take_profit'),
             "confidence": ai_response.get('confidence_score', 0),
-            "reasoning": ai_response.get('reasoning', '')
+            "reasoning": ai_response.get('reasoning', ''),
+            "model": self.view.model_var.get()
         }
         self.view.save_btn.configure(state="normal", fg_color="#2B823A")
         
@@ -262,10 +278,10 @@ class MainController:
         self.view.after(0, lambda: self.view.populate_journal(rows))
 
     def get_models_for_provider(self, provider):
-        if provider == "Gemini": return ["gemini-2.0-flash-exp", "gemini-1.5-flash"]
-        if provider == "Cerebras": return ["llama3.1-70b", "llama3.1-8b"]
+        if provider == "Gemini": return ["gemini-2.0-flash", "gemini-2.0-flash-lite-preview-02-05", "gemini-1.5-flash"]
+        if provider == "Cerebras": return ["llama3.1-8b", "llama3.1-70b"]
         if provider == "Groq": return ["llama-3.1-70b-versatile", "mixtral-8x7b-32768"]
-        if provider == "OpenRouter": return ["stepfun/step-3.5-flash:free", "google/gemini-2.0-flash-lite-preview-02-05:free"]
+        if provider == "OpenRouter": return ["google/gemini-2.0-flash-lite-preview-02-05:free", "stepfun/step-3.5-flash:free"]
         return []
 
     # --- Scanner ---
