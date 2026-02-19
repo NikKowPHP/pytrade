@@ -50,5 +50,5 @@ AI_MODELS = {
     "Gemini": ["gemini-2.0-flash", "gemini-2.0-flash-lite-preview-02-05", "gemini-1.5-flash"],
     "Cerebras": ["llama3.1-70b", "llama3.1-8b"],
     "Groq": ["llama-3.1-70b-versatile", "mixtral-8x7b-32768", "gemma2-9b-it"],
-    "OpenRouter": ["google/gemini-2.0-flash-lite-preview-02-05", "google/gemini-2.0-flash-001", "stepfun/step-3.5-flash:free"]
+    "OpenRouter": ["qwen/qwen-vl-plus", "google/gemini-2.0-flash-lite-preview-02-05", "google/gemini-2.0-flash-001", "stepfun/step-3.5-flash:free", "qwen/qwen3-vl-235b-a22b-thinking"]
 }

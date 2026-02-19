@@ -1,11 +1,13 @@
 import threading
 import concurrent.futures
 from services.logger import Logger
+from services.scanner_service import ScannerService
 from services.performance_service import PerformanceService
 from services.backtest_service import BacktestService
 from services.rag_service import RAGService
 from services.structure_service import StructureService
 from services.math_service import MathService
+from services.config_manager import ConfigManager
 from config import AI_MODELS
 
 class MainController:
@@ -28,16 +30,35 @@ class MainController:
         self.rag_service = RAGService()
         self.structure_service = StructureService()
         self.math_service = MathService()
+        self.config_manager = ConfigManager()
         
         # Inject AI into scanner for smart scanning
         self.scanner.ai_service = self.ai_trader
         
         # List of pairs to scan
         self.scan_pairs = [
-            "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", 
-            "NZDUSD", "EURGBP", "EURJPY", "GBPJPY", "XAUUSD", "BTC-USD"
+            "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD",
+            "EURGBP", "EURJPY", "EURCHF", "EURAUD", "EURCAD", "EURNZD",
+            "GBPJPY", "GBPCHF", "GBPAUD", "GBPCAD", "GBPNZD",
+            "AUDJPY", "AUDCHF", "AUDNZD", "AUDCAD",
+            "NZDJPY", "NZDCHF", "NZDCAD",
+            "CADJPY", "CADCHF", "CHFJPY",
+            "USDMXN", "USDTRY", "USDZAR", "USDSEK", "USDNOK",
+            "XAUUSD", "BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD"
         ]
         self.view.symbol_option.configure(values=self.scan_pairs)
+
+    def save_agent_config(self):
+        """Saves values from Settings tab to JSON."""
+        try:
+            settings = self.view.get_settings_input()
+            if self.config_manager.save_config(settings):
+                self.view.display_report("Configuration Saved Successfully!")
+            else:
+                self.view.display_error("Failed to save configuration.")
+        except Exception as e:
+            self.logger.error(f"Error saving config: {e}")
+            self.view.display_error(f"Error saving config: {e}")
 
     def on_startup(self):
         """Grades trades and loads stats on start."""
@@ -48,6 +69,9 @@ class MainController:
             self.load_journal_data()
             if self.cot_service:
                 self.cot_service.update_cot_data(self.market_data.db)
+            
+            # Load User Config into UI
+            self.view.after(0, lambda: self.view.load_settings_display(self.config_manager.config))
             
         threading.Thread(target=startup_tasks, daemon=True).start()
 
@@ -137,7 +161,12 @@ class MainController:
                     df_htf = self.market_data.calculate_indicators(df_htf)
                     last_htf = df_htf.iloc[-1]
                     
-                    htf_trend = "BULLISH" if last_htf['Close'] > last_htf['EMA_200'] else "BEARISH"
+                    if pd.notna(last_htf['EMA_200']):
+                        htf_trend = "BULLISH" if last_htf['Close'] > last_htf['EMA_200'] else "BEARISH"
+                        ema_status = 'Above' if htf_trend == 'BULLISH' else 'Below'
+                    else:
+                        htf_trend = "NEUTRAL (EMA200 N/A)"
+                        ema_status = "N/A"
                     
                     # NEW: HTF Structure
                     htf_struct, _ = self.structure_service.detect_structure(df_htf)
@@ -145,7 +174,7 @@ class MainController:
                     htf_context = (
                         f"**{htf.upper()} Trend:** {htf_trend}\n"
                         f"- RSI: {last_htf['RSI']:.2f}\n"
-                        f"- Price vs EMA200: {'Above' if htf_trend == 'BULLISH' else 'Below'}\n"
+                        f"- Price vs EMA200: {ema_status}\n"
                         f"{htf_struct}"
                     )
             except Exception as e:
@@ -275,17 +304,21 @@ class MainController:
 
             # 2. Sequential Agent Analysis (The Council)
             self.view.after(0, lambda: self.view.append_status("\n4. Consulting Quant Agent..."))
-            quant_report = self.ai_trader.analyze_quant(tech_summary, pivots, strategy, provider, model)
+            q_prov, q_mod = self.config_manager.get_agent_config("Quant")
+            quant_report = self.ai_trader.analyze_quant(tech_summary, pivots, strategy, q_prov, q_mod)
 
             self.view.after(0, lambda: self.view.append_status("\n5. Consulting Vision Agent..."))
-            vision_report = self.ai_trader.analyze_vision(chart_image, strategy, provider, model)
+            v_prov, v_mod = self.config_manager.get_agent_config("Vision")
+            vision_report = self.ai_trader.analyze_vision(chart_image, strategy, v_prov, v_mod)
 
             self.view.after(0, lambda: self.view.append_status("\n6. Consulting Fundamental Agent..."))
-            fund_report = self.ai_trader.analyze_fundamental(full_news, calendar_text, provider, model)
+            f_prov, f_mod = self.config_manager.get_agent_config("Fundamental")
+            fund_report = self.ai_trader.analyze_fundamental(full_news, calendar_text, f_prov, f_mod)
 
             # NEW: Devil's Advocate
             self.view.after(0, lambda: self.view.append_status("\n6.5. Summoning Devil's Advocate..."))
-            risk_report = self.ai_trader.analyze_risk(tech_summary, pivots, full_news, provider, model)
+            r_prov, r_mod = self.config_manager.get_agent_config("Risk")
+            risk_report = self.ai_trader.analyze_risk(tech_summary, pivots, full_news, r_prov, r_mod)
 
             # NEW: RAG MEMORY RETRIEVAL
             self.view.after(0, lambda: self.view.append_status("\n6.8. Checking RAG Memory..."))
@@ -313,11 +346,21 @@ class MainController:
             {risk_report}
             """
             
+            # Use Dashboard selection for Master, or Config if preferred. 
+            # Plan said Dashboard overrides Master.
+            # But let's check if Master config is set in settings, maybe use that as default? 
+            # Current logic: inputs['provider'] come from dashboard.
+            m_prov = provider 
+            m_mod = model
+            
+            # OPTIONAL: You could enforce Master config from settings too
+            # m_prov, m_mod = self.config_manager.get_agent_config("Master")
+            
             final_response = self.ai_trader.analyze_master(
                 council_reports, 
                 tech_summary,
-                provider=provider, 
-                model=model,
+                provider=m_prov, 
+                model=m_mod,
                 macro_context=macro_text,
                 rag_data=memory_data
             )
@@ -334,8 +377,13 @@ class MainController:
             # Block BUYs on High-Beta assets if SPX < 20MA (Risk Off)
             
             # 1. Define High-Beta Assets (Risk-On)
-            # Crypto and High-Beta Forex (AUD, NZD, GBP)
-            RISK_ON_ASSETS = ["AUDUSD", "NZDUSD", "GBPUSD", "BTC-USD", "ETH-USD", "SOL-USD", "SPX", "NDX", "EURUSD"]
+            # Crypto and High-Beta Forex (AUD, NZD, GBP, JPY Crosses)
+            RISK_ON_ASSETS = [
+                "AUDUSD", "NZDUSD", "GBPUSD", "EURUSD",
+                "AUDJPY", "NZDJPY", "GBPJPY", "EURJPY",
+                "BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD",
+                "SPX", "NDX"
+            ]
             
             # 2. Get Regime from Macro Stats
             risk_regime = macro_stats.get('risk_regime', 'NEUTRAL')

@@ -32,7 +32,8 @@ class MainWindow(ctk.CTk):
         self.tab_view.add("Dashboard")
         self.tab_view.add("Journal")
         self.tab_view.add("Stats") 
-        self.tab_view.add("Backtest") # NEW TAB
+        self.tab_view.add("Backtest") 
+        self.tab_view.add("Settings") # NEW TAB
         
         # --- DASHBOARD TAB ---
         self.dashboard = self.tab_view.tab("Dashboard")
@@ -49,7 +50,11 @@ class MainWindow(ctk.CTk):
         self.create_stats_tab()
 
         # --- BACKTEST TAB ---
+        # --- BACKTEST TAB ---
         self.create_backtest_tab()
+        
+        # --- SETTINGS TAB ---
+        self.create_settings_tab()
 
         # 4. Content Area (Scanner + Analysis + Chart)
         self.create_content_area()
@@ -536,3 +541,105 @@ class MainWindow(ctk.CTk):
             self.sentiment_label.configure(text_color="silver")
 
         self.sentiment_label.configure(text=text)
+
+    # --- SETTINGS TAB METHODS ---
+    def create_settings_tab(self):
+        self.settings_tab = self.tab_view.tab("Settings")
+        self.settings_tab.grid_columnconfigure(0, weight=1)
+        
+        container = ctk.CTkScrollableFrame(self.settings_tab)
+        container.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        ctk.CTkLabel(container, text="Agent Configuration", font=("Roboto", 20, "bold")).pack(pady=10)
+        ctk.CTkLabel(container, text="Configure default models for each AI Agent.", font=("Roboto", 12)).pack(pady=(0, 20))
+        
+        # Dictionary to store widget references
+        self.agent_configs = {}
+        
+        agents = ["Quant", "Vision", "Fundamental", "Risk", "Sentiment", "Master"]
+        
+        for agent in agents:
+            row = ctk.CTkFrame(container)
+            row.pack(fill="x", pady=5, padx=10)
+            
+            ctk.CTkLabel(row, text=f"{agent} Agent", width=120, font=("Roboto", 14, "bold"), anchor="w").pack(side="left", padx=10)
+            
+            # Provider
+            ctk.CTkLabel(row, text="Provider:").pack(side="left", padx=(10, 5))
+            prov_var = ctk.StringVar(value="Gemini")
+            prov_opt = ctk.CTkOptionMenu(
+                row, 
+                values=list(AI_MODELS.keys()), 
+                variable=prov_var, 
+                width=110,
+                command=lambda p, a=agent: self.update_settings_model_options(a, p)
+            )
+            prov_opt.pack(side="left", padx=5)
+            
+            # Model
+            ctk.CTkLabel(row, text="Model:").pack(side="left", padx=(10, 5))
+            mod_var = ctk.StringVar()
+            mod_opt = ctk.CTkOptionMenu(row, variable=mod_var, width=250)
+            mod_opt.pack(side="left", padx=5)
+            
+            # Store refs
+            self.agent_configs[agent] = {
+                "provider_var": prov_var,
+                "model_var": mod_var,
+                "model_opt": mod_opt
+            }
+            
+            # Initialize model options
+            self.update_settings_model_options(agent, "Gemini")
+
+        # Save Button
+        save_btn = ctk.CTkButton(
+            container, 
+            text="Save Configuration", 
+            command=self.on_save_settings, 
+            fg_color="#2B823A", 
+            font=("Roboto", 14, "bold"),
+            height=40
+        )
+        save_btn.pack(pady=30, fill="x", padx=100)
+
+    def update_settings_model_options(self, agent, provider):
+        """Updates the model dropdown for a specific agent row."""
+        models = AI_MODELS.get(provider, [])
+        config = self.agent_configs[agent]
+        config["model_opt"].configure(values=models)
+        if models:
+            config["model_var"].set(models[0])
+            
+    def on_save_settings(self):
+        if self.controller:
+            self.controller.save_agent_config()
+
+    def get_settings_input(self):
+        """Returns the current state of the settings tab."""
+        settings = {}
+        for agent, widgets in self.agent_configs.items():
+            settings[agent] = {
+                "provider": widgets["provider_var"].get(),
+                "model": widgets["model_var"].get()
+            }
+        return {"agents": settings}
+
+    def load_settings_display(self, config):
+        """Populates the settings tab with loaded config."""
+        if not config or "agents" not in config:
+            return
+            
+        agents_config = config["agents"]
+        for agent, settings in agents_config.items():
+            if agent in self.agent_configs:
+                widgets = self.agent_configs[agent]
+                provider = settings.get("provider", "Gemini")
+                model = settings.get("model", "")
+                
+                widgets["provider_var"].set(provider)
+                # Update model list for this provider
+                self.update_settings_model_options(agent, provider)
+                # Set specific model
+                if model:
+                    widgets["model_var"].set(model)
