@@ -1,0 +1,28 @@
+{
+    "agents": {
+        "Quant": {
+            "provider": "OpenRouter",
+            "model": "stepfun/step-3.5-flash:free"
+        },
+        "Vision": {
+            "provider": "OpenRouter",
+            "model": "qwen/qwen3-vl-235b-a22b-thinking"
+        },
+        "Fundamental": {
+            "provider": "OpenRouter",
+            "model": "stepfun/step-3.5-flash:free"
+        },
+        "Risk": {
+            "provider": "OpenRouter",
+            "model": "stepfun/step-3.5-flash:free"
+        },
+        "Sentiment": {
+            "provider": "OpenRouter",
+            "model": "stepfun/step-3.5-flash:free"
+        },
+        "Master": {
+            "provider": "OpenRouter",
+            "model": "stepfun/step-3.5-flash:free"
+        }
+    }
+}

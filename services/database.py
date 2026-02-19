@@ -382,3 +382,17 @@ class Database:
             self.logger.error(f"Error fetching COT data for {symbol}: {e}")
             return []
 
+    def clear_data(self, symbol, interval):
+        """Deletes market data for a specific symbol and interval."""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM market_data WHERE symbol = ? AND interval = ?", (symbol, interval))
+            conn.commit()
+            conn.close()
+            self.logger.info(f"Cleared corrupted data for {symbol} ({interval})")
+            return True
+        except Exception as e:
+            self.logger.error(f"Error clearing data: {e}")
+            return False
+

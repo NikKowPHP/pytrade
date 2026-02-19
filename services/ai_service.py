@@ -165,11 +165,13 @@ You are an expert Forex Swing Trader. Analyze the attached chart image and the d
         """
         self.logger.info(f"Analyzing with {provider} (Image present: {image is not None})")
         
-        # Currently only implementing Vision for Gemini as it's the most accessible multimodal model in this stack
+        # Multimodal Providers
         if provider.lower() == "gemini":
             return self._analyze_gemini(prompt, image, model)
+        elif provider.lower() == "openrouter":
+            return self._analyze_openrouter(prompt, image, model)
         
-        # Fallback for others (Text only)
+        # Text-Only Providers (Warn if image is dropped)
         if image:
             self.logger.warning(f"Provider {provider} does not support image input in this implementation. Ignoring image.")
         
@@ -177,8 +179,6 @@ You are an expert Forex Swing Trader. Analyze the attached chart image and the d
             return self._analyze_cerebras(prompt, model)
         elif provider.lower() == "groq":
             return self._analyze_groq(prompt, model)
-        elif provider.lower() == "openrouter":
-            return self._analyze_openrouter(prompt, model)
         else:
             return {"error": "Unknown provider"}
 
@@ -247,7 +247,7 @@ You are an expert Forex Swing Trader. Analyze the attached chart image and the d
              self.logger.exception(f"Exception during Groq analysis: {e}")
              return {"error": str(e)}
 
-    def _analyze_openrouter(self, prompt, model=None):
+    def _analyze_openrouter(self, prompt, image=None, model=None):
         try:
             self.logger.info("Starting OpenRouter analysis request")
             if not self.openrouter_client:
@@ -255,9 +255,43 @@ You are an expert Forex Swing Trader. Analyze the attached chart image and the d
 
             model_id = model if model else self.openrouter_model_id
             
+            messages = []
+            
+            if image:
+                # Convert PIL Image to Base64
+                import io
+                import base64
+                
+                try:
+                    buffered = io.BytesIO()
+                    # Ensure image is in a supported format (PNG/JPEG)
+                    image.save(buffered, format="PNG")
+                    img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+                    
+                    messages = [
+                        {
+                            "role": "user", 
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/png;base64,{img_str}"
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                except Exception as img_err:
+                    self.logger.error(f"Failed to process image for OpenRouter: {img_err}")
+                    # Fallback to text only if image processing fails
+                    messages = [{"role": "user", "content": prompt}]
+            else:
+                messages = [{"role": "user", "content": prompt}]
+
             completion = self.openrouter_client.chat.completions.create(
                 model=model_id,
-                messages=[{"role": "user", "content": prompt}],
+                messages=messages,
             )
             
             return self._parse_json_response(completion.choices[0].message.content)

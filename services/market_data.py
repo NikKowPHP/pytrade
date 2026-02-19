@@ -96,6 +96,27 @@ class MarketDataProvider:
             # 6. Load Complete Dataset from Database
             df = self.db.load_data(symbol, native_interval)
             
+            # --- DATA SANITY CHECK ---
+            # Detect corruption (e.g. GBPUSD mixing with GBPJPY: 147.0 vs 1.35)
+            if not df.empty and len(df) > 10:
+                try:
+                    # Check for massive instantaneous price drops/gaps (> 40% change in one step)
+                    # This handles the 147 -> 1.35 crash which causes RSI=2
+                    df['pct_change'] = df['Close'].pct_change().abs()
+                    max_change = df['pct_change'].max()
+                    
+                    if max_change > 0.4: # 40% jump is impossible in Forex majors/minors
+                        self.logger.warning(f"CORRUPTION DETECTED in {symbol}: Max change {max_change*100:.0f}%. PURGING DATA.")
+                        self.db.clear_data(symbol, native_interval)
+                        
+                        # Recursive retry (forcing fresh fetch since DB is empty)
+                        # We pass a flag or just recall fetch_data, but since DB is empty, 
+                        # next call will treat it as 'No existing data' -> full fetch.
+                        return self.fetch_data(symbol, interval)
+                        
+                except Exception as e:
+                    self.logger.error(f"Sanity check error: {e}")
+
             if df.empty:
                 return None, "No data available (neither local nor remote)."
 

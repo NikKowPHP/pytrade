@@ -1,4 +1,3 @@
-
 import pandas as pd
 import concurrent.futures
 from services.logger import Logger
@@ -22,18 +21,23 @@ class ScannerService:
             
             # 2. Indicators
             df = self.data_provider.calculate_indicators(df)
+            if len(df) < 200:
+                # Not enough data for EMA 200
+                return None
+                
             latest = df.iloc[-1]
             
             # 3. Logic: Filter for "Attention Needed"
             rsi = latest['RSI'] if pd.notna(latest['RSI']) else 50
             close = latest['Close']
             ema_200 = latest['EMA_200']
+            ema_50 = latest.get('EMA_50')
             
             signal_type = "NEUTRAL"
             score = 0 # 0 to 10 scale of importance
             details = ""
 
-            # RSI Extremes
+            # RSI Extremes (Tier 1 - High Priority)
             if rsi > 70:
                 signal_type = "OVERBOUGHT"
                 score = 8
@@ -42,14 +46,38 @@ class ScannerService:
                 signal_type = "OVERSOLD"
                 score = 8
                 details = f"RSI {rsi:.1f}"
+            
+            # RSI Momentum (Tier 2 - Medium Priority)
+            elif rsi > 60:
+                if score < 6:
+                    signal_type = "BULLISH MOMENTUM"
+                    score = 6
+                    details = f"RSI {rsi:.1f}"
+            elif rsi < 40:
+                if score < 6:
+                    signal_type = "BEARISH MOMENTUM"
+                    score = 6
+                    details = f"RSI {rsi:.1f}"
 
             # EMA Trend Test (Price close to EMA)
             if pd.notna(ema_200):
                 dist_pct = abs(close - ema_200) / ema_200
-                if dist_pct < 0.002: # Within 0.2%
+                if dist_pct < 0.005: # Within 0.5% (Relaxed from 0.2%)
                     signal_type = "EMA 200 TEST"
                     score = 9
                     details = "Testing Major Trend"
+
+            # Trend Alignment (Tier 3 - Basic Trend)
+            # If no other signal found, check for pure trend structure
+            if score < 5 and pd.notna(ema_50) and pd.notna(ema_200):
+                if close > ema_50 and ema_50 > ema_200:
+                    signal_type = "UPTREND"
+                    score = 5
+                    details = "Price > 50 > 200"
+                elif close < ema_50 and ema_50 < ema_200:
+                    signal_type = "DOWNTREND"
+                    score = 5
+                    details = "Price < 50 < 200"
 
             # If score is high enough, return result
             if score >= 5:
