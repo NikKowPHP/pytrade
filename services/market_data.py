@@ -1,5 +1,6 @@
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import pandas_ta as ta
 from datetime import timedelta
 from services.logger import Logger
@@ -280,6 +281,112 @@ class MarketDataProvider:
             self.logger.error(f"SMC Calculation Error: {e}")
             return "SMC Error", []
 
+    def calculate_volume_profile(self, df):
+        """
+        Calculates Volume Profile (VPVR) to find Point of Control (POC), 
+        Value Area High (VAH), and Value Area Low (VAL).
+        """
+        try:
+            if df is None or len(df) < 50:
+                return "Not enough data for VPVR.", {}
+
+            # Use last 100 candles or full dataframe if smaller
+            data = df.iloc[-100:].copy()
+            
+            # Create a histogram of volume at price levels
+            # We use 50 bins/levels
+            price_min = data['Low'].min()
+            price_max = data['High'].max()
+            
+            # Avoid division by zero
+            if price_max == price_min:
+                return "Flat Market (No VPVR)", {}
+
+            # Create bins
+            bins = np.linspace(price_min, price_max, 50)
+            
+            # Simple Volume Profile: Aggregate volume into buckets
+            # We can't use histogram directly with weights efficiently in one line without numpy
+            # So we iterate or use numpy.histogram
+            
+            # Calculate volume per bin
+            vol_profile, bin_edges = np.histogram(data['Close'], bins=bins, weights=data['Volume'])
+            
+            # Find POC (Bin with max volume)
+            max_vol_idx = vol_profile.argmax()
+            poc_price = (bin_edges[max_vol_idx] + bin_edges[max_vol_idx+1]) / 2
+            
+            # Calculate Value Area (70% of volume)
+            total_vol = vol_profile.sum()
+            target_vol = total_vol * 0.70
+            
+            # Start from POC and expand outwards
+            current_vol = vol_profile[max_vol_idx]
+            low_idx = max_vol_idx
+            high_idx = max_vol_idx
+            
+            while current_vol < target_vol:
+                # Try expanding down
+                lower_vol = 0
+                if low_idx > 0:
+                    lower_vol = vol_profile[low_idx - 1]
+                
+                # Try expanding up
+                upper_vol = 0
+                if high_idx < len(vol_profile) - 1:
+                    upper_vol = vol_profile[high_idx + 1]
+                
+                # Compare and expand
+                if lower_vol > upper_vol:
+                    current_vol += lower_vol
+                    low_idx -= 1
+                elif upper_vol > lower_vol:
+                    current_vol += upper_vol
+                    high_idx += 1
+                else: 
+                    # Equal or both zero/boundaries
+                    if low_idx > 0:
+                        current_vol += lower_vol
+                        low_idx -= 1
+                    elif high_idx < len(vol_profile) - 1:
+                        current_vol += upper_vol
+                        high_idx += 1
+                    else:
+                        break # Cannot expand further
+            
+            val_price = bin_edges[low_idx]
+            vah_price = bin_edges[high_idx + 1]
+            
+            current_price = df.iloc[-1]['Close']
+            
+            # Interpret
+            status = "INSIDE VALUE AREA (Rotation Likely)"
+            if current_price > vah_price:
+                status = "ABOVE VALUE AREA (Bullish Breakout)"
+            elif current_price < val_price:
+                status = "BELOW VALUE AREA (Bearish Breakdown)"
+
+            text = (
+                f"VOLUME PROFILE (VPVR):\n"
+                f"- POC: {poc_price:.5f}\n"
+                f"- VAH: {vah_price:.5f}\n"
+                f"- VAL: {val_price:.5f}\n"
+                f"- Status: {status}\n"
+            )
+            
+            levels = {
+                "POC": poc_price,
+                "VAH": vah_price,
+                "VAL": val_price,
+                "Status": status
+            }
+            
+            return text, levels
+
+        except Exception as e:
+            self.logger.error(f"VPVR Calculation Error: {e}")
+            return "VPVR Error", {}
+
     def get_correlation_data(self, main_df, symbol, interval):
         """
         Fetches a related 'Truth Asset' and calculates correlation.
@@ -340,29 +447,42 @@ class MarketDataProvider:
             rolling_corr = aligned['Main'].rolling(window=50).corr(aligned['Comp'])
             current_corr = rolling_corr.iloc[-1]
             
-            # 5. Calculate recent performance (Last 5 candles) to detect divergence
-            # e.g. If Corr is -0.9 (Inverse), but both moved UP, that's a divergence.
-            main_move = (aligned['Main'].iloc[-1] - aligned['Main'].iloc[-5]) / aligned['Main'].iloc[-5]
-            comp_move = (aligned['Comp'].iloc[-1] - aligned['Comp'].iloc[-5]) / aligned['Comp'].iloc[-5]
-
+            # --- NEW: Z-SCORE ANALYSIS (Statistical Divergence) ---
+            # Calculate the spread between the two assets (Normalized)
+            # We normalize them first to compare apples to apples
+            
+            # Z-Score of the SPREAD (Asset A - Asset B)
+            # If Z-Score is extreme (>2), it means the relationship is stretched and due for mean reversion.
+            
+            # Normalize prices to percentage change from start of window
+            window = 50
+            subset = aligned.iloc[-window:].copy()
+            
+            # Normalize to 0-1 or pct change range for comparison
+            subset['Main_Norm'] = (subset['Main'] - subset['Main'].mean()) / subset['Main'].std()
+            subset['Comp_Norm'] = (subset['Comp'] - subset['Comp'].mean()) / subset['Comp'].std()
+            
+            subset['Spread'] = subset['Main_Norm'] - subset['Comp_Norm']
+            
+            spread_mean = subset['Spread'].mean() # Should be close to 0
+            spread_std = subset['Spread'].std()
+            
+            current_spread = subset['Spread'].iloc[-1]
+            z_score = (current_spread - spread_mean) / spread_std if spread_std != 0 else 0
+            
             status = "NORMAL"
-            if abs(current_corr) > 0.8:
-                # High Correlation exists
-                if current_corr < 0: # Inverse relationship (e.g. EURUSD vs DXY)
-                    # If they moved in SAME direction, it's a fakeout
-                    if (main_move > 0 and comp_move > 0) or (main_move < 0 and comp_move < 0):
-                        status = "⚠️ DIVERGENCE (FAKE-OUT RISK)"
-                else: # Direct relationship (e.g. AUDUSD vs NZDUSD)
-                    # If they moved in OPPOSITE direction
-                    if (main_move > 0 and comp_move < 0) or (main_move < 0 and comp_move > 0):
-                         status = "⚠️ DIVERGENCE (NON-CONFIRMED)"
-
+            
+            # Interpretation
+            if abs(z_score) > 2.0:
+                 status = f"⚠️ EXTREME DIVERGENCE (Z: {z_score:.2f}) - Mean Reversion Likely"
+            elif abs(z_score) > 1.5:
+                 status = f"WATCH (Z: {z_score:.2f}) - Stretched"
+            
             text = (
                 f"INTER-MARKET CORRELATION ({comp_name}):\n"
                 f"- Correlation Coeff (50): {current_corr:.2f}\n"
+                f"- 50-Day Z-Score Divergence: {z_score:.2f}\n"
                 f"- Status: {status}\n"
-                f"- {symbol} 5-bar Move: {main_move*100:.2f}%\n"
-                f"- {comp_name} 5-bar Move: {comp_move*100:.2f}%\n"
             )
             
             return text, current_corr

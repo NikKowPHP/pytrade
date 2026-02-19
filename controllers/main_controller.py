@@ -1,10 +1,11 @@
 import threading
 import concurrent.futures
 from services.logger import Logger
-from services.scanner_service import ScannerService
 from services.performance_service import PerformanceService
 from services.backtest_service import BacktestService
 from services.rag_service import RAGService
+from services.structure_service import StructureService
+from services.math_service import MathService
 from config import AI_MODELS
 
 class MainController:
@@ -25,6 +26,8 @@ class MainController:
         self.cot_service = services.get('cot') # COT Service
         self.current_macro_text = ""
         self.rag_service = RAGService()
+        self.structure_service = StructureService()
+        self.math_service = MathService()
         
         # Inject AI into scanner for smart scanning
         self.scanner.ai_service = self.ai_trader
@@ -135,10 +138,15 @@ class MainController:
                     last_htf = df_htf.iloc[-1]
                     
                     htf_trend = "BULLISH" if last_htf['Close'] > last_htf['EMA_200'] else "BEARISH"
+                    
+                    # NEW: HTF Structure
+                    htf_struct, _ = self.structure_service.detect_structure(df_htf)
+                    
                     htf_context = (
                         f"**{htf.upper()} Trend:** {htf_trend}\n"
                         f"- RSI: {last_htf['RSI']:.2f}\n"
-                        f"- Price vs EMA200: {'Above' if htf_trend == 'BULLISH' else 'Below'}"
+                        f"- Price vs EMA200: {'Above' if htf_trend == 'BULLISH' else 'Below'}\n"
+                        f"{htf_struct}"
                     )
             except Exception as e:
                 self.logger.error(f"HTF Fetch Error: {e}")
@@ -234,7 +242,22 @@ class MainController:
             # NEW: Correlation Matrix
             self.view.after(0, lambda: self.view.append_status("\n3.8. Checking Correlations..."))
             corr_text, corr_score = self.market_data.get_correlation_data(self.last_df, symbol, inputs['timeframe'])
+
+            # NEW: Volume Profile (VPVR)
+            vpvr_text, vpvr_levels = self.market_data.calculate_volume_profile(self.last_df)
             
+            # NEW: Structure Analysis (Current TF)
+            st_text, st_data = self.structure_service.detect_structure(self.last_df)
+            
+            # Combine with HTF context (which now includes HTF structure)
+            mtf_alignment = self.structure_service.analyze_multi_timeframe(htf_context, st_text)
+            
+            if "⚠️" in mtf_alignment:
+                 self.view.after(0, lambda: self.view.append_status(f"\n{mtf_alignment.splitlines()[1]}"))
+
+            # NEW: Monte Carlo Simulation
+            mc_text, mc_ranges = self.math_service.monte_carlo_simulation(self.last_df)
+
             # Update UI with correlation warning if needed
             if "⚠️" in corr_text:
                  self.view.after(0, lambda: self.view.append_status(f"\n{corr_text.splitlines()[2]}"))
@@ -242,9 +265,13 @@ class MainController:
             tech_summary = self.last_df.iloc[-1].to_dict()
             # Add mtf_trend for Master
             tech_summary['higher_timeframe'] = htf_context
+            tech_summary['structure'] = st_text
+            tech_summary['mtf_alignment'] = mtf_alignment
+            tech_summary['monte_carlo'] = mc_text # Add Monte Carlo context
             # Add SMC to tech summary for Agents
             tech_summary['smart_money_concepts'] = smc_text
             tech_summary['correlations'] = corr_text  # Add to tech summary
+            tech_summary['volume_profile'] = vpvr_text # Add VPVR
 
             # 2. Sequential Agent Analysis (The Council)
             self.view.after(0, lambda: self.view.append_status("\n4. Consulting Quant Agent..."))

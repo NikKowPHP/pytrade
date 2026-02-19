@@ -11,3 +11,4 @@ openai
 matplotlib
 mplfinance
 tkinterweb
+scipy
