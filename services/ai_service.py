@@ -12,11 +12,13 @@ from services.logger import Logger
 from groq import Groq
 from openai import OpenAI
 from services.database import Database
+from services.seasonality_service import SeasonalityService
 
 class AITrader:
     def __init__(self):
         self.logger = Logger()
         self.db = Database()
+        self.seasonality_service = SeasonalityService()
         
         # Initialize Gemini
         try:
@@ -362,7 +364,61 @@ You are an expert Forex Swing Trader. Analyze the attached chart image and the d
         """
         return self.analyze(prompt, provider=provider, model=model)
 
-    def analyze_master(self, council_reports, tech_details, provider, model, macro_context=""):
+    def _get_cot_context(self, symbol):
+        """Fetches and formats COT data for the prompt."""
+        try:
+            cot_data = self.db.get_latest_cot(symbol)
+            if not cot_data:
+                return "COT Data: Unavailable."
+            
+            latest = cot_data[0]
+            context = f"COT Report ({latest['date']}):\n"
+            context += f"- Non-Comm Longs: {latest['non_comm_long']:,.0f}\n"
+            context += f"- Non-Comm Shorts: {latest['non_comm_short']:,.0f}\n"
+            context += f"- Net Non-Comm: {latest['net_non_comm']:,.0f}\n"
+            
+            if len(cot_data) > 1:
+                prev = cot_data[1]
+                change = latest['net_non_comm'] - prev['net_non_comm']
+                context += f"- One-Week Change: {change:,.0f} contracts\n"
+                
+                # Simple logic interpretation
+                if change > 0:
+                    context += "- Institutional Sentiment: ACCUMULATION (Bullish)\n"
+                elif change < 0:
+                    context += "- Institutional Sentiment: DISTRIBUTION (Bearish)\n"
+            
+            return context
+        except Exception as e:
+            self.logger.error(f"Error getting COT context: {e}")
+            return "COT Data: Error fetching."
+
+    def analyze_master(self, council_reports, tech_details, provider, model, macro_context="", rag_data=None):
+        
+        # Fetch COT Data internally
+        cot_context = self._get_cot_context(tech_details.get('symbol'))
+        
+        # Format RAG Data
+        rag_text = "No similar historical trades found."
+        if rag_data:
+            rag_text = "TOP 3 HISTORICAL MATCHES:\n"
+            for i, memory in enumerate(rag_data, 1):
+                rag_text += (
+                    f"Match {i} (Similarity: {memory['similarity']:.2f}): "
+                    f"Result: {memory['result']} (Profit: {memory['profit']}R). "
+                    f"Context: {memory['context']}\n"
+                )
+        
+        # 5. SEASONALITY & PROBABILITY
+        seasonality = self.seasonality_service.get_seasonality_report(
+            tech_details.get("symbol", "UNKNOWN")
+        )
+        seasonality_text = f"""
+        {seasonality['report_text']}
+        - INSTRUCTION: {seasonality['instruction']}
+        - CONFIDENCE ADJ: {seasonality['modifier']}
+        """
+
         prompt = f"""
         MASTER AGENT: Trading Desk Head
         
@@ -383,6 +439,22 @@ You are an expert Forex Swing Trader. Analyze the attached chart image and the d
 
         **3. THE COUNCIL REPORTS (Proponents)**
         {council_reports}
+
+        **4. INSTITUTIONAL POSITIONING (COT)**
+        {cot_context}
+        *CRITICAL:*
+        - If Price is RISING but Net Non-Comm is DROPPING (Divergence), this is a WEAK RALLY.
+        - If Price is FALLING but Net Non-Comm is RISING, this is a BULLISH ACCUMULATION.
+
+        **5. INSTITUTIONAL MEMORY (RAG)**
+        {rag_text}
+        - If similar past setups resulted in LOSS, be extra cautious.
+        - If similar past setups resulted in WIN, increase confidence.
+
+        **5. SEASONALITY & PROBABILITY**
+        {seasonality_text}
+        - If Seasonality is BEARISH, do not take long trades unless the setup is perfect.
+
 
         **TASK:** 
         Synthesize everything.

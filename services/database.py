@@ -60,6 +60,29 @@ class Database:
                 cursor.execute("ALTER TABLE trade_journal ADD COLUMN model TEXT")
             except: pass
             
+            # Ensure context column exists for RAG
+            try:
+                cursor.execute("ALTER TABLE trade_journal ADD COLUMN context TEXT")
+            except: pass
+
+            # NEW: COT Data Table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS cot_data (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date DATETIME,
+                    symbol TEXT,
+                    contract TEXT,
+                    non_comm_long REAL,
+                    non_comm_short REAL,
+                    net_non_comm REAL,
+                    comm_long REAL,
+                    comm_short REAL,
+                    net_comm REAL,
+                    open_interest REAL,
+                    UNIQUE(date, symbol)
+                )
+            ''')
+            
             conn.commit()
             conn.close()
         except Exception as e:
@@ -72,12 +95,12 @@ class Database:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO trade_journal 
-                (symbol, timeframe, provider, decision, entry, stop_loss, take_profit, confidence, reasoning, model)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (symbol, timeframe, provider, decision, entry, stop_loss, take_profit, confidence, reasoning, model, context)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 data['symbol'], data['timeframe'], data['provider'], 
                 data['decision'], data['entry'], data['stop_loss'], data['take_profit'], 
-                data['confidence'], data['reasoning'], data.get('model')
+                data['confidence'], data['reasoning'], data.get('model'), data.get('context', '')
             ))
             conn.commit()
             conn.close()
@@ -298,3 +321,64 @@ class Database:
         except Exception as e:
             self.logger.error(f"Error fetching recent failures for {symbol}: {e}")
             return []
+
+    def get_trade_context(self, trade_id):
+        """Retrieves the context string for a specific trade."""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            cursor.execute("SELECT context FROM trade_journal WHERE id = ?", (trade_id,))
+            result = cursor.fetchone()
+            conn.close()
+            return result[0] if result else None
+        except Exception as e:
+            self.logger.error(f"Error fetching trade context: {e}")
+            return None
+
+    def save_cot_data(self, cot_list):
+        """Bulk saves COT data."""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            
+            records = []
+            for item in cot_list:
+                records.append((
+                    item['date'], item['symbol'], item['contract'],
+                    item['non_comm_long'], item['non_comm_short'], item['net_non_comm'],
+                    item['comm_long'], item['comm_short'], item['net_comm'],
+                    item['open_interest']
+                ))
+            
+            cursor.executemany('''
+                INSERT OR REPLACE INTO cot_data 
+                (date, symbol, contract, non_comm_long, non_comm_short, net_non_comm, comm_long, comm_short, net_comm, open_interest)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', records)
+            
+            conn.commit()
+            conn.close()
+            self.logger.info(f"Saved {len(records)} COT records to DB.")
+        except Exception as e:
+            self.logger.error(f"Error saving COT data: {e}")
+
+    def get_latest_cot(self, symbol):
+        """Retrieves the most recent COT report for a symbol."""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT * FROM cot_data 
+                WHERE symbol = ? 
+                ORDER BY date DESC LIMIT 2
+            ''', (symbol,))
+            
+            rows = [dict(row) for row in cursor.fetchall()]
+            conn.close()
+            return rows
+        except Exception as e:
+            self.logger.error(f"Error fetching COT data for {symbol}: {e}")
+            return []
+

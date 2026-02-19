@@ -17,13 +17,43 @@ class MacroService:
     def fetch_macro_context(self):
         """
         Fetches % change of macro assets to determine regime.
-        Returns a text summary and a raw dictionary.
+        Also calculates S&P 500 (SPX) 20-day SMA for Risk ON/OFF filter.
+        Returns a text summary and a raw dictionary (stats).
         """
         try:
             self.logger.info("Fetching Global Macro Data...")
             data_text = "GLOBAL MACRO CONTEXT (24h Change):\n"
             stats = {}
             
+            # 1. Fetch SPX History for SMA Calculation (Risk Regime)
+            # We need at least 20 days. Fetching '1mo' is safer.
+            spx_ticker = self.tickers["SPX"]
+            spx_history = yf.Ticker(spx_ticker).history(period="1mo")
+            
+            risk_regime = "NEUTRAL"
+            spx_price = 0
+            spx_sma20 = 0
+
+            if not spx_history.empty and len(spx_history) >= 20:
+                spx_sma20 = spx_history['Close'].rolling(window=20).mean().iloc[-1]
+                spx_price = spx_history['Close'].iloc[-1]
+                
+                # Determine Regime
+                if spx_price > spx_sma20:
+                    risk_regime = "RISK ON (Bullish Equities)"
+                else:
+                    risk_regime = "RISK OFF (Bearish Equities)"
+                
+                stats['spx_price'] = spx_price
+                stats['spx_sma20'] = spx_sma20
+                stats['risk_regime'] = risk_regime
+
+                data_text += f"\n--- RISK REGIME FILTER ---\n"
+                data_text += f"Market State: {risk_regime}\n"
+                data_text += f"SPX Price: {spx_price:.2f} | 20 SMA: {spx_sma20:.2f}\n"
+                data_text += "--------------------------\n"
+
+            # 2. Fetch Daily Context for Dashboard (Last 5 days)
             # Download all at once for speed
             tickers_list = list(self.tickers.values())
             df = yf.download(tickers_list, period="5d", progress=False)['Close']
@@ -50,7 +80,7 @@ class MacroService:
                             c_price = df[ticker].iloc[-1]
                             p_price = df[ticker].iloc[-2]
 
-                        if c_price and p_price:
+                        if c_price is not None and p_price is not None:
                             pct = ((c_price - p_price) / p_price) * 100
                             stats[name] = pct
                             symbol = "🟢" if pct > 0 else "🔴"

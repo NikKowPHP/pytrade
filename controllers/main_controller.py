@@ -4,6 +4,7 @@ from services.logger import Logger
 from services.scanner_service import ScannerService
 from services.performance_service import PerformanceService
 from services.backtest_service import BacktestService
+from services.rag_service import RAGService
 from config import AI_MODELS
 
 class MainController:
@@ -21,7 +22,9 @@ class MainController:
         self.performance_service = PerformanceService(self.market_data.db)
         self.backtester = BacktestService(self.market_data, self.ai_trader, self.chart_service)
         self.macro_service = services['macro']
+        self.cot_service = services.get('cot') # COT Service
         self.current_macro_text = ""
+        self.rag_service = RAGService()
         
         # Inject AI into scanner for smart scanning
         self.scanner.ai_service = self.ai_trader
@@ -40,6 +43,8 @@ class MainController:
             self.update_stats()
             self._startup_worker()
             self.load_journal_data()
+            if self.cot_service:
+                self.cot_service.update_cot_data(self.market_data.db)
             
         threading.Thread(target=startup_tasks, daemon=True).start()
 
@@ -255,6 +260,20 @@ class MainController:
             self.view.after(0, lambda: self.view.append_status("\n6.5. Summoning Devil's Advocate..."))
             risk_report = self.ai_trader.analyze_risk(tech_summary, pivots, full_news, provider, model)
 
+            # NEW: RAG MEMORY RETRIEVAL
+            self.view.after(0, lambda: self.view.append_status("\n6.8. Checking RAG Memory..."))
+            
+            # Construct Context String for RAG
+            # Format: "RSI: 75 | Trend: BULLISH | Pattern: Double Top | News: Negative"
+            rag_query = (
+                f"RSI: {tech_summary.get('RSI', 0):.2f} | "
+                f"Trend: {tech_summary.get('higher_timeframe', '').splitlines()[0]} | "
+                f"SMC: {smc_text} | "
+                f"News Score: {sent_score}"
+            )
+            
+            memory_data = self.rag_service.find_similar_trades(rag_query, limit=3)
+            
             # 3. Master Synthesis
             self.view.after(0, lambda: self.view.append_status("\n7. Master Decision in progress..."))
             
@@ -272,13 +291,46 @@ class MainController:
                 tech_summary,
                 provider=provider, 
                 model=model,
-                macro_context=macro_text
+                macro_context=macro_text,
+                rag_data=memory_data
             )
+            
+            # Embed the context used for this analysis so we can save it later
+            final_response['rag_context_used'] = rag_query
 
             if "error" in final_response:
                 self.view.after(0, lambda: self.view.display_error(final_response['error']))
                 self.view.after(0, lambda: self.view.analyze_btn.configure(state="normal", text="Analyze Symbol"))
                 return
+
+            # --- RISK REGIME FILTER (New) ---
+            # Block BUYs on High-Beta assets if SPX < 20MA (Risk Off)
+            
+            # 1. Define High-Beta Assets (Risk-On)
+            # Crypto and High-Beta Forex (AUD, NZD, GBP)
+            RISK_ON_ASSETS = ["AUDUSD", "NZDUSD", "GBPUSD", "BTC-USD", "ETH-USD", "SOL-USD", "SPX", "NDX", "EURUSD"]
+            
+            # 2. Get Regime from Macro Stats
+            risk_regime = macro_stats.get('risk_regime', 'NEUTRAL')
+            is_risk_off = "RISK OFF" in risk_regime
+            
+            # 3. Apply Logic
+            if final_response.get('decision') == "BUY":
+                if symbol in RISK_ON_ASSETS and is_risk_off:
+                    
+                    # Override Decision
+                    final_response['decision'] = "WAIT"
+                    
+                    # Append Warning to Reasoning
+                    block_msg = (
+                        "\n\n⛔ **RISK REGIME BLOCK TRIGGERED** ⛔\n"
+                        "Global Equities are in a downtrend (SPX < 20-Day SMA). "
+                        "Buying high-beta assets like AUD/NZD/Crypto is statistically dangerous here. "
+                        "The AI's Buy signal has been OVERRIDDEN to WAIT/PROTECT CAPITAL."
+                    )
+                    final_response['reasoning'] = block_msg + "\n\nOriginal Reasoning:\n" + final_response.get('reasoning', '')
+                    
+                    self.view.after(0, lambda: self.view.append_status("\n⛔ RISK FILTER: Trade Blocked (Market is Risk-Off)"))
 
             # 4. Finalize
             self.view.after(0, lambda: self._finalize_results(final_response, {"symbol": symbol, "price": tech_summary['Close']}))
@@ -305,7 +357,10 @@ class MainController:
             "take_profit": ai_response.get('take_profit'),
             "confidence": ai_response.get('confidence_score', 0),
             "reasoning": ai_response.get('reasoning', ''),
-            "model": self.view.model_var.get()
+            "confidence": ai_response.get('confidence_score', 0),
+            "reasoning": ai_response.get('reasoning', ''),
+            "model": self.view.model_var.get(),
+            "context": ai_response.get('rag_context_used', '')
         }
         self.view.save_btn.configure(state="normal", fg_color="#2B823A")
         

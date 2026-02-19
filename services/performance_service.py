@@ -1,11 +1,13 @@
 import pandas as pd
 import yfinance as yf
 from services.logger import Logger
+from services.rag_service import RAGService
 
 class PerformanceService:
     def __init__(self, db):
         self.logger = Logger()
         self.db = db
+        self.rag_service = RAGService()
 
     def grade_open_trades(self):
         """Checks historical price data to resolve open AI signals."""
@@ -47,6 +49,22 @@ class PerformanceService:
 
                 if result:
                     self.db.update_trade_result(trade['id'], result, exit_price)
+                    
+                    # NEW: Learn from this trade
+                    try:
+                        context = self.db.get_trade_context(trade['id'])
+                        if context:
+                            profit_r = 0.0
+                            if result == "WIN":
+                                risk = trade['entry'] - trade['stop_loss']
+                                if risk != 0:
+                                    profit_r = abs((exit_price - trade['entry']) / risk)
+                            elif result == "LOSS":
+                                profit_r = -1.0
+                            
+                            self.rag_service.add_memory(trade['id'], context, result, profit_r)
+                    except Exception as e:
+                        self.logger.error(f"Failed to save RAG memory for trade {trade['id']}: {e}")
             except Exception as e:
                 self.logger.error(f"Grader error for ID {trade['id']}: {e}")
 
