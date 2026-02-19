@@ -1,5 +1,6 @@
 import threading
 import concurrent.futures
+import pandas as pd
 from services.logger import Logger
 from services.scanner_service import ScannerService
 from services.performance_service import PerformanceService
@@ -152,6 +153,8 @@ class MainController:
             
             # 2. Fetch Higher Timeframe Context
             htf_context = "Higher Timeframe Data Unavailable"
+            htf = '1d' # Default fallback
+            
             try:
                 htf_map = {'1h': '4h', '4h': '1d', '1d': '1wk'}
                 htf = htf_map.get(main_tf, '1d')
@@ -168,7 +171,7 @@ class MainController:
                         htf_trend = "NEUTRAL (EMA200 N/A)"
                         ema_status = "N/A"
                     
-                    # NEW: HTF Structure
+                    # HTF Structure
                     htf_struct, _ = self.structure_service.detect_structure(df_htf)
                     
                     htf_context = (
@@ -179,6 +182,19 @@ class MainController:
                     )
             except Exception as e:
                 self.logger.error(f"HTF Fetch Error: {e}")
+
+            # 3. Fetch Macro (Weekly) Context if not already fetched
+            if htf != '1wk' and main_tf != '1wk':
+                try:
+                    df_wk, err_wk = self.market_data.fetch_data(symbol, '1wk')
+                    if not err_wk and df_wk is not None:
+                         df_wk = self.market_data.calculate_indicators(df_wk)
+                         last_wk = df_wk.iloc[-1]
+                         wk_trend = "BULLISH" if last_wk['Close'] > last_wk.get('EMA_200', 0) else "BEARISH"
+                         
+                         htf_context += f"\n\n**MACRO WEEKLY CONTEXT:**\n- Trend: {wk_trend}\n- RSI: {last_wk['RSI']:.2f}"
+                except Exception as e:
+                    self.logger.error(f"Macro Weekly Fetch Error: {e}")
 
             # Trigger Step 2 (Main Thread)
             self.view.after(0, lambda: self._pipeline_step_2_visuals(htf_context))
@@ -216,8 +232,6 @@ class MainController:
         try:
             inputs = self.view.get_inputs()
             symbol = inputs['symbol']
-            provider = inputs['provider']
-            model = inputs['model']
             strategy = inputs['strategy']
 
             self.view.after(0, lambda: self.view.append_status("\n3. Gathering Context (News & Macro)..."))
@@ -231,7 +245,10 @@ class MainController:
             
             # NEW: Sentiment Analysis
             self.view.after(0, lambda: self.view.append_status("\n3.5. Analyzing News Sentiment..."))
-            sentiment_data = self.ai_trader.analyze_sentiment(raw_headlines, symbol, provider, model)
+            
+            # Use Sentiment Agent config
+            s_prov, s_mod = self.config_manager.get_agent_config("Sentiment")
+            sentiment_data = self.ai_trader.analyze_sentiment(raw_headlines, symbol, s_prov, s_mod)
             
             sent_score = float(sentiment_data.get("score", 0))
             sent_summary = sentiment_data.get("reasoning", "")
@@ -346,15 +363,8 @@ class MainController:
             {risk_report}
             """
             
-            # Use Dashboard selection for Master, or Config if preferred. 
-            # Plan said Dashboard overrides Master.
-            # But let's check if Master config is set in settings, maybe use that as default? 
-            # Current logic: inputs['provider'] come from dashboard.
-            m_prov = provider 
-            m_mod = model
-            
-            # OPTIONAL: You could enforce Master config from settings too
-            # m_prov, m_mod = self.config_manager.get_agent_config("Master")
+            # Fetch Master configuration
+            m_prov, m_mod = self.config_manager.get_agent_config("Master")
             
             final_response = self.ai_trader.analyze_master(
                 council_reports, 
@@ -408,14 +418,14 @@ class MainController:
                     self.view.after(0, lambda: self.view.append_status("\n⛔ RISK FILTER: Trade Blocked (Market is Risk-Off)"))
 
             # 4. Finalize
-            self.view.after(0, lambda: self._finalize_results(final_response, {"symbol": symbol, "price": tech_summary['Close']}))
+            self.view.after(0, lambda: self._finalize_results(final_response, {"symbol": symbol, "price": tech_summary['Close']}, master_config={"provider": m_prov, "model": m_mod}))
 
         except Exception as e:
             self.logger.exception(f"Council Pipeline Error: {e}")
             self.view.after(0, lambda: self.view.display_error(str(e)))
             self.view.after(0, lambda: self.view.analyze_btn.configure(state="normal", text="Analyze Symbol"))
 
-    def _finalize_results(self, ai_response, tech_details):
+    def _finalize_results(self, ai_response, tech_details, master_config=None):
         """Update UI with final results (Main Thread)."""
         report = self._format_report(ai_response, tech_details)
         self.view.display_report(report)
@@ -425,7 +435,7 @@ class MainController:
         self.current_analysis_data = {
             "symbol": tech_details['symbol'],
             "timeframe": self.view.timeframe_var.get(),
-            "provider": self.view.provider_var.get(),
+            "provider": master_config['provider'] if master_config else "Unknown",
             "decision": ai_response.get('decision', 'WAIT'),
             "entry": ai_response.get('entry'),
             "stop_loss": ai_response.get('stop_loss'),
@@ -434,7 +444,7 @@ class MainController:
             "reasoning": ai_response.get('reasoning', ''),
             "confidence": ai_response.get('confidence_score', 0),
             "reasoning": ai_response.get('reasoning', ''),
-            "model": self.view.model_var.get(),
+            "model": master_config['model'] if master_config else "Unknown",
             "context": ai_response.get('rag_context_used', '')
         }
         self.view.save_btn.configure(state="normal", fg_color="#2B823A")

@@ -11,13 +11,18 @@ class MarketDataProvider:
         self.logger = Logger()
         self.db = Database()
 
-    def fetch_data(self, symbol, interval):
+    def fetch_data(self, symbol, interval, force_full=False):
         """
         Fetches OHLC data using yfinance with local database caching.
         Handles '4h' interval by fetching '1h' and resampling.
+        
+        Args:
+            symbol (str): Ticker symbol.
+            interval (str): Timeframe (e.g., '1h', '1d', '1wk').
+            force_full (bool): If True, ignores local cache and fetches full history.
         """
         try:
-            self.logger.info(f"Fetching data for {symbol} with interval {interval}")
+            self.logger.info(f"Fetching data for {symbol} with interval {interval} (Force Full: {force_full})")
             
             # 1. Ticker Resolution
             if not symbol.endswith('=X') and len(symbol) == 6: 
@@ -26,8 +31,6 @@ class MarketDataProvider:
                 ticker_symbol = symbol
 
             # 2. Determine Native Interval for Storage
-            # We store '1h' for '4h' requests to keep DB granular.
-            # We store '1d' for '1d' requests.
             native_interval = interval
             resample_needed = False
             
@@ -36,7 +39,9 @@ class MarketDataProvider:
                 resample_needed = True
 
             # 3. Check Local Database for Last Timestamp
-            last_ts = self.db.get_last_timestamp(symbol, native_interval)
+            last_ts = None
+            if not force_full:
+                last_ts = self.db.get_last_timestamp(symbol, native_interval)
             
             # 4. Determine Fetch Strategy
             start_date = None
@@ -54,9 +59,11 @@ class MarketDataProvider:
                     fetch_period = "2y" 
                 elif native_interval == '1d':
                     fetch_period = "5y"
+                elif native_interval == '1wk':
+                    fetch_period = "10y"
                 else:
-                    fetch_period = "1y"
-                self.logger.info(f"No existing data for {symbol}. Fetching full history ({fetch_period})")
+                    fetch_period = "2y"
+                self.logger.info(f"No existing data (or forced refresh) for {symbol}. Fetching full history ({fetch_period})")
 
             # 5. Fetch Data from Yahoo Finance
             try:
@@ -96,6 +103,13 @@ class MarketDataProvider:
             # 6. Load Complete Dataset from Database
             df = self.db.load_data(symbol, native_interval)
             
+            # --- INSUFFICIENT DATA CHECK ---
+            # If we have very few rows (e.g. < 200), indicators like EMA200 will be 0/NaN.
+            # If we didn't just force a full fetch, try forcing one now.
+            if (df is None or len(df) < 200) and not force_full:
+                self.logger.warning(f"Insufficient data ({len(df) if df is not None else 0} rows) for {symbol}. Forcing full history fetch.")
+                return self.fetch_data(symbol, interval, force_full=True)
+
             # --- DATA SANITY CHECK ---
             # Detect corruption (e.g. GBPUSD mixing with GBPJPY: 147.0 vs 1.35)
             if not df.empty and len(df) > 10:
@@ -109,16 +123,15 @@ class MarketDataProvider:
                         self.logger.warning(f"CORRUPTION DETECTED in {symbol}: Max change {max_change*100:.0f}%. PURGING DATA.")
                         self.db.clear_data(symbol, native_interval)
                         
-                        # Recursive retry (forcing fresh fetch since DB is empty)
-                        # We pass a flag or just recall fetch_data, but since DB is empty, 
-                        # next call will treat it as 'No existing data' -> full fetch.
-                        return self.fetch_data(symbol, interval)
+                        # Recursive retry with full fetch
+                        if not force_full:
+                            return self.fetch_data(symbol, interval, force_full=True)
                         
                 except Exception as e:
                     self.logger.error(f"Sanity check error: {e}")
 
             if df.empty:
-                return None, "No data available (neither local nor remote)."
+                return None, "No data available."
 
             # 7. Resample if needed (e.g., 1h -> 4h)
             if resample_needed:
@@ -135,7 +148,6 @@ class MarketDataProvider:
                     agg_dict[vol_col] = 'sum'
 
                 # '4h' resampling
-                # Use closed='left', label='left' or similar if needed, but standard resample is usually fine for forex
                 df = df.resample('4h').agg(agg_dict).dropna()
 
             self.logger.debug(f"Total rows available for {symbol}: {len(df)}")

@@ -107,30 +107,6 @@ class MainWindow(ctk.CTk):
         self.timeframe_option = ctk.CTkOptionMenu(row_tf, values=["1h", "4h", "1d"], variable=self.timeframe_var, width=120)
         self.timeframe_option.pack(side="right")
 
-        # Provider
-        row_prov = ctk.CTkFrame(self.input_panel, fg_color="transparent")
-        row_prov.pack(fill="x", padx=10, pady=2)
-        ctk.CTkLabel(row_prov, text="AI Provider:", font=("Roboto", 12)).pack(side="left")
-        self.provider_var = ctk.StringVar(value="Gemini")
-        self.provider_option = ctk.CTkOptionMenu(
-            row_prov, 
-            values=list(AI_MODELS.keys()), 
-            variable=self.provider_var, 
-            command=self.on_provider_change,
-            width=120
-        )
-        self.provider_option.pack(side="right")
-
-        # Model
-        row_mod = ctk.CTkFrame(self.input_panel, fg_color="transparent")
-        row_mod.pack(fill="x", padx=10, pady=2)
-        ctk.CTkLabel(row_mod, text="Model:", font=("Roboto", 12)).pack(side="left")
-        # Set default model dynamically
-        default_models = AI_MODELS.get("Gemini", [])
-        self.model_var = ctk.StringVar(value=default_models[0] if default_models else "")
-        self.model_option = ctk.CTkOptionMenu(row_mod, values=default_models, variable=self.model_var, width=120)
-        self.model_option.pack(side="right")
-
         # Strategy (New)
         row_strat = ctk.CTkFrame(self.input_panel, fg_color="transparent")
         row_strat.pack(fill="x", padx=10, pady=2)
@@ -189,11 +165,6 @@ class MainWindow(ctk.CTk):
         self.canvas = None
 
     # --- View Actions ---
-    def on_provider_change(self, provider):
-        if self.controller:
-            models = self.controller.get_models_for_provider(provider)
-            self.model_option.configure(values=models)
-            if models: self.model_var.set(models[0])
 
     def on_analyze_click(self):
         if self.controller:
@@ -205,9 +176,7 @@ class MainWindow(ctk.CTk):
         return {
             "symbol": self.symbol_var.get(),
             "timeframe": self.timeframe_var.get(),
-            "provider": self.provider_var.get(),
-            "model": self.model_var.get(),
-            "strategy": self.strategy_var.get(), # NEW
+            "strategy": self.strategy_var.get(), 
             "news_context": self.news_textbox.get("1.0", "end").strip()
         }
 
