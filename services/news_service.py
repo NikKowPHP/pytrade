@@ -99,6 +99,7 @@ class NewsService:
             
             # Risk Flag
             high_impact_imminent = False
+            min_days_to_impact = 999
             now = datetime.now() # Server time (Make sure to align timezones in production)
 
             for event in root.findall('event'):
@@ -123,6 +124,13 @@ class NewsService:
                 # Check Time Delta for High Impact
                 if impact == 'High':
                     try:
+                        event_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                        today = now.date()
+                        delta = (event_date - today).days
+                        
+                        if delta >= 0 and delta < min_days_to_impact:
+                            min_days_to_impact = delta
+                            
                         # LOGIC: Check if date is today
                         if date_str == now.strftime("%Y-%m-%d"):
                             events_text += "   !!! HIGH IMPACT EVENT TODAY !!!\n"
@@ -133,11 +141,18 @@ class NewsService:
             if not found_events:
                  events_text += "No significant events found.\n"
 
-            return events_text, high_impact_imminent
+            # Return specialized dictionary to support 'Clear Air' calculations
+            risk_data = {
+                'today': high_impact_imminent,
+                'days_to_high_impact': min_days_to_impact if min_days_to_impact != 999 else "No events this week"
+            }
+            events_text += f"\nCLEAR AIR: {risk_data['days_to_high_impact']} days until next High Impact event.\n"
+            
+            return events_text, risk_data
 
         except Exception as e:
             if hasattr(e, 'response') and e.response.status_code == 429:
                 self.logger.warning("ForexFactory Rate Limit (429).")
-                return "Economic Calendar unavailable (Rate Limited).\n", False
+                return "Economic Calendar unavailable (Rate Limited).\n", {'today': False, 'days_to_high_impact': 'Unknown'}
             self.logger.error(f"Error fetching Economic Calendar: {e}")
-            return "Error fetching calendar.\n", False
+            return "Error fetching calendar.\n", {'today': False, 'days_to_high_impact': 'Unknown'}

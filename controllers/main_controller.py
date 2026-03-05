@@ -9,6 +9,8 @@ from services.rag_service import RAGService
 from services.structure_service import StructureService
 from services.math_service import MathService
 from services.config_manager import ConfigManager
+from services.yield_service import YieldService
+from services.csm_service import CSMService
 from config import AI_MODELS
 
 class MainController:
@@ -32,6 +34,8 @@ class MainController:
         self.structure_service = StructureService()
         self.math_service = MathService()
         self.config_manager = ConfigManager()
+        self.yield_service = YieldService()
+        self.csm_service = CSMService()
         
         # Inject AI into scanner for smart scanning
         self.scanner.ai_service = self.ai_trader
@@ -156,15 +160,15 @@ class MainController:
             htf = '1d' # Default fallback
             
             try:
-                htf_map = {'1h': '4h', '4h': '1d', '1d': '1wk'}
-                htf = htf_map.get(main_tf, '1d')
+                htf_map = {'1d': '1wk', '1wk': '1mo', '1mo': '1y'}
+                htf = htf_map.get(main_tf, '1wk')
                 
                 df_htf, err_htf = self.market_data.fetch_data(symbol, htf)
                 if not err_htf and df_htf is not None:
                     df_htf = self.market_data.calculate_indicators(df_htf)
                     last_htf = df_htf.iloc[-1]
                     
-                    if pd.notna(last_htf['EMA_200']):
+                    if pd.notna(last_htf.get('EMA_200')):
                         htf_trend = "BULLISH" if last_htf['Close'] > last_htf['EMA_200'] else "BEARISH"
                         ema_status = 'Above' if htf_trend == 'BULLISH' else 'Below'
                     else:
@@ -271,15 +275,34 @@ class MainController:
 
             calendar_text, is_high_impact = self.news_service.fetch_economic_calendar(symbol)
             
-            # Safety Warning
-            if is_high_impact:
+            # Support 'Clear Air' feature from updated NewsService
+            if isinstance(is_high_impact, dict):
+                # New tuple return from updated news_service
+                days_clear = is_high_impact.get('days_to_high_impact', 'Unknown')
+                if is_high_impact.get('today'):
+                    msg = "⚠️ HIGH IMPACT EVENT DETECTED TODAY. TRADING IS RISKY."
+                    self.view.after(0, lambda: self.view.append_status(f"\n\n{msg}"))
+                    calendar_text = f"!!! WARNING: {msg} !!!\n{calendar_text}"
+                else:
+                    self.view.after(0, lambda: self.view.append_status(f" ({days_clear} Days Clear Air)"))
+            elif is_high_impact:
+                # Old fallback
                 msg = "⚠️ HIGH IMPACT EVENT DETECTED TODAY. TRADING IS RISKY."
                 self.view.after(0, lambda: self.view.append_status(f"\n\n{msg}"))
                 calendar_text = f"!!! WARNING: {msg} !!!\n{calendar_text}"
 
             manual_news = inputs['news_context']
+            
+            # Incorporate Yield/Swap Analysis
+            self.view.after(0, lambda: self.view.append_status("\n3.6. Analyzing Swap/Yield Differentials..."))
+            yield_text, _ = self.yield_service.fetch_swap_impact(symbol)
+            
+            # Incorporate Currency Strength Matrix (CSM)
+            self.view.after(0, lambda: self.view.append_status("\n3.7. Calculating CSM (Currency Strength)..."))
+            csm_text, _ = self.csm_service.get_currency_strength(inputs['timeframe'])
+
             # Add to context for Master Agent
-            full_news = f"SENTIMENT SCORE: {sent_score} ({sent_summary})\nDIVERGENCE CHECK: {divergence_msg if divergence_msg else 'None'}\n\n{manual_news}\n{auto_news}"
+            full_news = f"SENTIMENT SCORE: {sent_score} ({sent_summary})\nDIVERGENCE CHECK: {divergence_msg if divergence_msg else 'None'}\n\n{manual_news}\n{auto_news}\n\n{yield_text}\n\n{csm_text}"
             pivots = self.market_data.calculate_pivots(self.last_df)
             
             # Calculate Smart Money Concepts
@@ -290,7 +313,7 @@ class MainController:
             corr_text, corr_score = self.market_data.get_correlation_data(self.last_df, symbol, inputs['timeframe'])
 
             # NEW: Volume Profile (VPVR)
-            vpvr_text, vpvr_levels = self.market_data.calculate_volume_profile(self.last_df)
+            vpvr_text, vpvr_levels = self.market_data.calculate_volume_profile(self.last_df, inputs['timeframe'])
             
             # NEW: Structure Analysis (Current TF)
             st_text, st_data = self.structure_service.detect_structure(self.last_df)
@@ -425,8 +448,54 @@ class MainController:
             self.view.after(0, lambda: self.view.display_error(str(e)))
             self.view.after(0, lambda: self.view.analyze_btn.configure(state="normal", text="Analyze Symbol"))
 
+    def _calculate_lot_size(self, symbol, entry, sl):
+        """Calculates lot size based on Account Balance, Risk %, and SL pips"""
+        if not entry or not sl: return None
+        
+        try:
+            entry = float(entry)
+            sl = float(sl)
+            
+            # Distance in price
+            risk_amount = abs(entry - sl)
+            if risk_amount == 0: return 0
+            
+            # Simple pip approximation (Assume XXX/USD standard where 0.0001 = 1 pip)
+            # JPY pairs usually have 0.01 as 1 pip
+            if "JPY" in symbol:
+                pip_value = 0.01
+                # Rough approximation: ¥100/$1
+                usd_per_pip_lot = 1000 / entry  
+            elif "USD" in symbol[:3]:
+                # USD/XXX
+                pip_value = 0.0001
+                usd_per_pip_lot = 10 / entry
+            else:
+                # XXX/USD
+                pip_value = 0.0001
+                usd_per_pip_lot = 10 
+                
+            risk_pips = risk_amount / pip_value
+            
+            bal, risk_pct = self.config_manager.get_risk_config()
+            money_at_risk = bal * (risk_pct / 100.0)
+            
+            lots = money_at_risk / (risk_pips * usd_per_pip_lot)
+            return round(lots, 2)
+        except Exception as e:
+            self.logger.error(f"Error calculating lot size: {e}")
+            return None
+
     def _finalize_results(self, ai_response, tech_details, master_config=None):
         """Update UI with final results (Main Thread)."""
+        # Calculate Lot Size
+        lot_size = self._calculate_lot_size(
+            tech_details['symbol'], 
+            ai_response.get('entry'), 
+            ai_response.get('stop_loss')
+        )
+        ai_response['lot_size'] = lot_size
+        
         report = self._format_report(ai_response, tech_details)
         self.view.display_report(report)
         self.view.analyze_btn.configure(state="normal", text="Analyze Symbol")
@@ -445,7 +514,8 @@ class MainController:
             "confidence": ai_response.get('confidence_score', 0),
             "reasoning": ai_response.get('reasoning', ''),
             "model": master_config['model'] if master_config else "Unknown",
-            "context": ai_response.get('rag_context_used', '')
+            "context": ai_response.get('rag_context_used', ''),
+            "lot_size": ai_response.get('lot_size')
         }
         self.view.save_btn.configure(state="normal", fg_color="#2B823A")
         
@@ -455,11 +525,12 @@ class MainController:
         self.view.embed_chart(fig)
 
     def _format_report(self, ai, tech):
+        lot_str = f"Lot Size: {ai.get('lot_size')} (Based on Account Risk)" if ai.get('lot_size') else ""
         return (
             f"\n{'='*30}\n DECISION: {ai.get('decision', 'N/A')} ({ai.get('confidence_score', '0')}%) \n{'='*30}\n\n"
-            f"--- SETUP ---\nEntry: {ai.get('entry')}\nSL: {ai.get('stop_loss')}\nTP: {ai.get('take_profit')}\n\n"
-            f"--- DATA ---\nPrice: {tech.get('price')} | Trend: {tech.get('trend')}\n"
-            f"RSI: {tech.get('rsi')} | ATR: {tech.get('atr')}\n\n"
+            f"--- SETUP ---\nEntry: {ai.get('entry')}\nSL: {ai.get('stop_loss')}\nTP: {ai.get('take_profit')}\n{lot_str}\n\n"
+            f"--- DATA ---\nPrice: {tech.get('price')} | Trend: {tech.get('trend', 'N/A')}\n"
+            f"RSI: {tech.get('rsi', 'N/A')} | ATR: {tech.get('atr', 'N/A')}\n\n"
             f"--- REASONING ---\n{ai.get('reasoning', 'N/A')}"
         )
 

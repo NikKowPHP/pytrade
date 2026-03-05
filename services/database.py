@@ -64,6 +64,20 @@ class Database:
             try:
                 cursor.execute("ALTER TABLE trade_journal ADD COLUMN context TEXT")
             except: pass
+            
+            # Position Sizing fields
+            try:
+                cursor.execute("ALTER TABLE trade_journal ADD COLUMN lot_size REAL")
+            except: pass
+            
+            # NEW: Watchlist Table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS watchlist (
+                    symbol TEXT PRIMARY KEY,
+                    added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    notes TEXT
+                )
+            ''')
 
             # NEW: COT Data Table
             cursor.execute('''
@@ -95,12 +109,13 @@ class Database:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO trade_journal 
-                (symbol, timeframe, provider, decision, entry, stop_loss, take_profit, confidence, reasoning, model, context)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (symbol, timeframe, provider, decision, entry, stop_loss, take_profit, confidence, reasoning, model, context, lot_size)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 data['symbol'], data['timeframe'], data['provider'], 
                 data['decision'], data['entry'], data['stop_loss'], data['take_profit'], 
-                data['confidence'], data['reasoning'], data.get('model'), data.get('context', '')
+                data['confidence'], data['reasoning'], data.get('model'), data.get('context', ''),
+                data.get('lot_size')
             ))
             conn.commit()
             conn.close()
@@ -260,6 +275,47 @@ class Database:
             return rows
         except Exception as e:
             self.logger.error(f"Error fetching open trades: {e}")
+            return []
+
+    # --- WATCHLIST METHODS ---
+    def add_to_watchlist(self, symbol, notes=""):
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO watchlist (symbol, notes)
+                VALUES (?, ?)
+            ''', (symbol, notes))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            self.logger.error(f"Error adding to watchlist: {e}")
+            return False
+
+    def remove_from_watchlist(self, symbol):
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM watchlist WHERE symbol = ?", (symbol,))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            self.logger.error(f"Error removing from watchlist: {e}")
+            return False
+
+    def get_watchlist(self):
+        try:
+            conn = sqlite3.connect(self.db_name)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM watchlist ORDER BY added_at DESC")
+            rows = [dict(row) for row in cursor.fetchall()]
+            conn.close()
+            return [row['symbol'] for row in rows]
+        except Exception as e:
+            self.logger.error(f"Error fetching watchlist: {e}")
             return []
 
     def update_trade_result(self, trade_id, result, exit_price):

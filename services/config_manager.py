@@ -4,36 +4,51 @@ import os
 from services.logger import Logger
 
 class ConfigManager:
-    def __init__(self, config_file="user_config.json"):
-        self.config_file = config_file
+    def __init__(self, filepath="config.json"):
+        self.filepath = filepath
         self.logger = Logger()
         self.config = self.load_config()
 
-    def load_config(self):
-        """Loads configuration from JSON file, or returns defaults."""
-        default_config = {
+    def default_config(self):
+        return {
             "agents": {
-                "Quant": {"provider": "Gemini", "model": "gemini-2.0-flash"},
-                "Vision": {"provider": "OpenRouter", "model": "qwen/qwen3-vl-235b-a22b-thinking"},
-                "Fundamental": {"provider": "Gemini", "model": "gemini-2.0-flash"},
-                "Risk": {"provider": "Gemini", "model": "gemini-2.0-flash"},
-                "Sentiment": {"provider": "Gemini", "model": "gemini-2.0-flash"},
-                "Master": {"provider": "Gemini", "model": "gemini-2.0-flash"}
+                "Quant": {"provider": "Gemini", "model": "gemini-3-flash-preview"},
+                "Vision": {"provider": "Gemini", "model": "gemini-3-flash-preview"},
+                "Fundamental": {"provider": "Gemini", "model": "gemini-3-flash-preview"},
+                "Risk": {"provider": "Gemini", "model": "gemini-3-flash-preview"},
+                "Sentiment": {"provider": "Gemini", "model": "gemini-3-flash-preview"},
+                "Master": {"provider": "Gemini", "model": "gemini-3-flash-preview"}
+            },
+            "risk": {
+                "account_balance": 10000.0,
+                "risk_percent": 1.0
             }
         }
+
+    def load_config(self):
+        """Loads configuration from JSON file, or returns defaults."""
+        default_config = self.default_config()
         
-        if not os.path.exists(self.config_file):
+        if not os.path.exists(self.filepath):
             return default_config
             
         try:
-            with open(self.config_file, 'r') as f:
+            with open(self.filepath, 'r') as f:
                 saved_config = json.load(f)
                 # Merge with defaults to ensure all keys exist
-                for agent, settings in default_config["agents"].items():
-                    if agent not in saved_config.get("agents", {}):
-                        if "agents" not in saved_config: saved_config["agents"] = {}
-                        saved_config["agents"][agent] = settings
-                return saved_config
+                merged_config = default_config.copy()
+                
+                # Recursively merge dictionaries
+                def deep_merge(source, destination):
+                    for key, value in source.items():
+                        if isinstance(value, dict) and key in destination and isinstance(destination[key], dict):
+                            destination[key] = deep_merge(value, destination[key])
+                        else:
+                            destination[key] = value
+                    return destination
+
+                merged_config = deep_merge(saved_config, merged_config)
+                return merged_config
         except Exception as e:
             self.logger.error(f"Error loading config: {e}")
             return default_config
@@ -41,7 +56,7 @@ class ConfigManager:
     def save_config(self, new_config):
         """Saves configuration to JSON file."""
         try:
-            with open(self.config_file, 'w') as f:
+            with open(self.filepath, 'w') as f:
                 json.dump(new_config, f, indent=4)
             self.config = new_config
             self.logger.info("Configuration saved successfully.")
@@ -51,6 +66,10 @@ class ConfigManager:
             return False
 
     def get_agent_config(self, agent_name):
-        """Returns (provider, model) tuple for a specific agent."""
-        agent_settings = self.config.get("agents", {}).get(agent_name, {})
-        return agent_settings.get("provider", "Gemini"), agent_settings.get("model", "gemini-2.0-flash")
+        agents = self.config.get("agents", {})
+        agent_conf = agents.get(agent_name, {})
+        return agent_conf.get("provider", "Gemini"), agent_conf.get("model", "")
+        
+    def get_risk_config(self):
+        risk = self.config.get("risk", {})
+        return float(risk.get("account_balance", 10000.0)), float(risk.get("risk_percent", 1.0))

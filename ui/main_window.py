@@ -31,6 +31,7 @@ class MainWindow(ctk.CTk):
         self.tab_view.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
         self.tab_view.add("Dashboard")
         self.tab_view.add("Journal")
+        self.tab_view.add("Watchlist") # NEW TAB
         self.tab_view.add("Stats") 
         self.tab_view.add("Backtest") 
         self.tab_view.add("Settings") # NEW TAB
@@ -46,10 +47,15 @@ class MainWindow(ctk.CTk):
         self.journal_tab.grid_rowconfigure(0, weight=1)
         self.create_journal_tab()
 
+        # --- WATCHLIST TAB ---
+        self.watchlist_tab = self.tab_view.tab("Watchlist")
+        self.watchlist_tab.grid_columnconfigure(0, weight=1)
+        self.watchlist_tab.grid_rowconfigure(1, weight=1)
+        self.create_watchlist_tab()
+
         # --- STATS TAB ---
         self.create_stats_tab()
 
-        # --- BACKTEST TAB ---
         # --- BACKTEST TAB ---
         self.create_backtest_tab()
         
@@ -104,7 +110,7 @@ class MainWindow(ctk.CTk):
         row_tf.pack(fill="x", padx=10, pady=2)
         ctk.CTkLabel(row_tf, text="Timeframe:", font=("Roboto", 12)).pack(side="left")
         self.timeframe_var = ctk.StringVar(value="1d")
-        self.timeframe_option = ctk.CTkOptionMenu(row_tf, values=["1h", "4h", "1d"], variable=self.timeframe_var, width=120)
+        self.timeframe_option = ctk.CTkOptionMenu(row_tf, values=["1d", "1wk", "1mo"], variable=self.timeframe_var, width=120)
         self.timeframe_option.pack(side="right")
 
         # Strategy (New)
@@ -142,7 +148,11 @@ class MainWindow(ctk.CTk):
         self.analyze_btn = ctk.CTkButton(self.input_panel, text="Full AI Analysis", command=self.on_analyze_click, font=("Roboto", 15, "bold"), height=35)
         self.analyze_btn.pack(pady=10, padx=10, fill="x")
 
-        # NEW: Save Button (Initially disabled)
+        # Save to Watchlist Button
+        self.watch_btn = ctk.CTkButton(self.input_panel, text="Add to Watchlist", command=self.on_watch_click, fg_color="#F39C12", hover_color="#D68910")
+        self.watch_btn.pack(pady=(0, 10), padx=10, fill="x")
+
+        # Save Button (Initially disabled)
         self.save_btn = ctk.CTkButton(self.input_panel, text="Save to Journal", command=self.on_save_click, fg_color="#555555", state="disabled")
         self.save_btn.pack(pady=(0, 10), padx=10, fill="x")
 
@@ -285,6 +295,40 @@ class MainWindow(ctk.CTk):
     def on_save_click(self):
         if self.controller:
             self.controller.save_current_analysis()
+
+    def on_watch_click(self):
+        if self.controller:
+            symbol = self.symbol_var.get()
+            self.controller.market_data.db.add_to_watchlist(symbol, "Staged for review")
+            self.append_status(f"\nAdded {symbol} to Watchlist.")
+            self.on_refresh_watchlist()
+
+    def create_watchlist_tab(self):
+        self.refresh_watch_btn = ctk.CTkButton(self.watchlist_tab, text="Refresh Watchlist", command=self.on_refresh_watchlist)
+        self.refresh_watch_btn.pack(pady=10, anchor="w", padx=20)
+        
+        self.watch_list_frame = ctk.CTkScrollableFrame(self.watchlist_tab)
+        self.watch_list_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+    def on_refresh_watchlist(self):
+        if self.controller:
+            symbols = self.controller.market_data.db.get_watchlist()
+            self.populate_watchlist(symbols)
+            
+    def populate_watchlist(self, symbols):
+        for widget in self.watch_list_frame.winfo_children():
+            widget.destroy()
+            
+        for symbol in symbols:
+            row = ctk.CTkFrame(self.watch_list_frame)
+            row.pack(fill="x", pady=2)
+            
+            ctk.CTkLabel(row, text=symbol, font=("Roboto", 14, "bold"), width=100).pack(side="left", padx=10, pady=5)
+            
+            # Analyze & Remove buttons
+            ctk.CTkButton(row, text="Analyze", width=80, command=lambda s=symbol: self.controller.load_symbol(s)).pack(side="right", padx=5)
+            ctk.CTkButton(row, text="Remove", width=80, fg_color="#C0392B", hover_color="#922B21", 
+                          command=lambda s=symbol: [self.controller.market_data.db.remove_from_watchlist(s), self.on_refresh_watchlist()]).pack(side="right", padx=5)
 
     def on_refresh_journal(self):
         if self.controller:
@@ -522,6 +566,22 @@ class MainWindow(ctk.CTk):
         ctk.CTkLabel(container, text="Agent Configuration", font=("Roboto", 20, "bold")).pack(pady=10)
         ctk.CTkLabel(container, text="Configure default models for each AI Agent.", font=("Roboto", 12)).pack(pady=(0, 20))
         
+        # Risk Settings
+        ctk.CTkLabel(container, text="Risk & Position Sizing", font=("Roboto", 16, "bold")).pack(pady=10, anchor="w", padx=10)
+        
+        risk_row = ctk.CTkFrame(container)
+        risk_row.pack(fill="x", pady=5, padx=10)
+        
+        ctk.CTkLabel(risk_row, text="Account Balance ($):").pack(side="left", padx=10)
+        self.balance_var = ctk.StringVar(value="10000.0")
+        ctk.CTkEntry(risk_row, textvariable=self.balance_var, width=100).pack(side="left", padx=5)
+        
+        ctk.CTkLabel(risk_row, text="Risk Per Trade (%):").pack(side="left", padx=(20, 10))
+        self.risk_var = ctk.StringVar(value="1.0")
+        ctk.CTkEntry(risk_row, textvariable=self.risk_var, width=60).pack(side="left", padx=5)
+
+        ctk.CTkLabel(container, text="Agent Configuration", font=("Roboto", 16, "bold")).pack(pady=(20, 10), anchor="w", padx=10)
+        
         # Dictionary to store widget references
         self.agent_configs = {}
         
@@ -592,14 +652,25 @@ class MainWindow(ctk.CTk):
                 "provider": widgets["provider_var"].get(),
                 "model": widgets["model_var"].get()
             }
-        return {"agents": settings}
+            
+        try:
+            bal = float(self.balance_var.get())
+            risk = float(self.risk_var.get())
+        except ValueError:
+            bal = 10000.0
+            risk = 1.0
+            
+        return {
+            "agents": settings,
+            "risk": {"account_balance": bal, "risk_percent": risk}
+        }
 
     def load_settings_display(self, config):
         """Populates the settings tab with loaded config."""
         if not config or "agents" not in config:
             return
             
-        agents_config = config["agents"]
+        agents_config = config.get("agents", {})
         for agent, settings in agents_config.items():
             if agent in self.agent_configs:
                 widgets = self.agent_configs[agent]
@@ -612,3 +683,7 @@ class MainWindow(ctk.CTk):
                 # Set specific model
                 if model:
                     widgets["model_var"].set(model)
+                    
+        risk_config = config.get("risk", {})
+        self.balance_var.set(str(risk_config.get("account_balance", 10000.0)))
+        self.risk_var.set(str(risk_config.get("risk_percent", 1.0)))

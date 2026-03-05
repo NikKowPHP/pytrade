@@ -1,5 +1,4 @@
-from google import genai
-from google.genai import types
+
 from cerebras.cloud.sdk import Cerebras
 import json
 import pandas as pd
@@ -23,14 +22,9 @@ class AITrader:
         # Initialize Gemini
         try:
             self.gemini_api_key = GEMINI_API_KEY
-            if self.gemini_api_key:
-                self.gemini_client = genai.Client(api_key=self.gemini_api_key)
-            else:
-                self.gemini_client = None
             self.gemini_model_id = GEMINI_MODEL_ID
         except Exception as e:
-            self.logger.error(f"Error initializing Gemini Client: {e}")
-            self.gemini_client = None
+            self.logger.error(f"Error initializing Gemini: {e}")
 
         # Initialize Cerebras
         try:
@@ -184,24 +178,79 @@ You are an expert Forex Swing Trader. Analyze the attached chart image and the d
 
     def _analyze_gemini(self, prompt, image=None, model=None):
         try:
-            if not self.gemini_client:
+            if not getattr(self, "gemini_api_key", None):
                 return {"error": "Gemini API Key missing"}
             
-            model_id = model if model else self.gemini_model_id
+            import requests
+            import json
             
-            # Prepare content list
-            contents = [prompt]
+            model_id = model if model else getattr(self, "gemini_model_id", "gemini-3-flash-preview")
+            
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:streamGenerateContent?key={self.gemini_api_key}"
+            
+            parts = []
             if image:
-                contents.append(image)
+                import io
+                import base64
+                try:
+                    buffered = io.BytesIO()
+                    image.save(buffered, format="PNG")
+                    img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+                    
+                    parts.append({
+                        "inlineData": {
+                            "mimeType": "image/png",
+                            "data": img_str
+                        }
+                    })
+                except Exception as img_err:
+                    self.logger.error(f"Failed to process image for Gemini: {img_err}")
+                    
+            parts.append({
+                "text": prompt
+            })
 
-            response = self.gemini_client.models.generate_content(
-                model=model_id,
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
-                )
-            )
-            return self._parse_json_response(response.text)
+            payload = {
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": parts
+                    }
+                ],
+                "generationConfig": {
+                    "responseMimeType": "application/json"
+                }
+            }
+
+            headers = {
+                "Content-Type": "application/json"
+            }
+
+            response = requests.post(url, json=payload, headers=headers)
+            
+            if response.status_code != 200:
+                self.logger.error(f"Gemini API Error {response.status_code}: {response.text}")
+                return {"error": f"API Error {response.status_code}"}
+                
+            response_json = response.json()
+            
+            full_text = ""
+            for chunk in response_json:
+                try:
+                    if "candidates" in chunk and chunk["candidates"]:
+                        candidate = chunk["candidates"][0]
+                        if "content" in candidate and "parts" in candidate["content"]:
+                            for part in candidate["content"]["parts"]:
+                                if "text" in part:
+                                    full_text += part["text"]
+                except Exception:
+                    pass
+                    
+            if not full_text:
+                self.logger.error(f"Failed to extract text from Gemini response: {json.dumps(response_json)}")
+                return {"error": "Invalid response structure"}
+                
+            return self._parse_json_response(full_text)
 
         except Exception as e:
             self.logger.exception(f"Gemini Analysis Error: {e}")

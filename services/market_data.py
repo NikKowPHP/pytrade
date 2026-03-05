@@ -314,17 +314,24 @@ class MarketDataProvider:
             self.logger.error(f"SMC Calculation Error: {e}")
             return "SMC Error", []
 
-    def calculate_volume_profile(self, df):
+    def calculate_volume_profile(self, df, timeframe='1d'):
         """
         Calculates Volume Profile (VPVR) to find Point of Control (POC), 
         Value Area High (VAH), and Value Area Low (VAL).
+        Uses Year-To-Date (YTD) for '1d', otherwise 100 candle lookback.
         """
         try:
             if df is None or len(df) < 50:
                 return "Not enough data for VPVR.", {}
 
-            # Use last 100 candles or full dataframe if smaller
-            data = df.iloc[-100:].copy()
+            # Use YTD if 1d timeframe, else last 100 candles
+            if timeframe == '1d':
+                current_year = df.index[-1].year
+                data = df[df.index.year == current_year].copy()
+                if len(data) < 20: # If it's early Jan, fall back to last 100
+                     data = df.iloc[-100:].copy()
+            else:
+                data = df.iloc[-100:].copy()
             
             # Create a histogram of volume at price levels
             # We use 50 bins/levels
